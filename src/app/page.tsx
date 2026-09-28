@@ -141,6 +141,13 @@ export default async function Home() {
                 </div>
 
                 <div className="flex items-center gap-3">
+                  <Link
+                    href="/tree"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-semibold text-xs shadow-md shadow-emerald-700/20 transition hover:scale-[1.02]"
+                  >
+                    <GitFork className="w-4 h-4 rotate-90" />
+                    <span>Ver Árbol Visual</span>
+                  </Link>
                   <AddMemberModal />
                 </div>
               </div>
