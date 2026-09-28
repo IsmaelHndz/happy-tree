@@ -75,6 +75,54 @@ export interface Database {
         };
         Relationships: [];
       };
+      profiles: {
+        Row: {
+          id: string;
+          person_id: string | null;
+          is_user_zero: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          person_id?: string | null;
+          is_user_zero?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          person_id?: string | null;
+          is_user_zero?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      endorsements: {
+        Row: {
+          id: string;
+          endorser_id: string;
+          endorsed_id: string;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          endorser_id: string;
+          endorsed_id: string;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          endorser_id?: string;
+          endorsed_id?: string;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       parent_child_edges: {
         Row: {
           id: string;
@@ -194,7 +242,31 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      bootstrap_user_zero: {
+        Args: {
+          p_user_id: string;
+          p_first_name: string;
+          p_last_name: string;
+          p_gender?: Gender;
+          p_birth_date?: string | null;
+        };
+        Returns: Json;
+      };
+      claim_person_profile: {
+        Args: {
+          p_token: string;
+          p_user_id: string;
+          p_first_name?: string | null;
+          p_last_name?: string | null;
+        };
+        Returns: Json;
+      };
+      check_user_can_invite: {
+        Args: {
+          p_user_id: string;
+        };
+        Returns: Json;
+      };
     };
     Enums: {
       gender_enum: Gender;
