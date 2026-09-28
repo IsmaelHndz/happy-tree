@@ -212,6 +212,7 @@ export async function createFamilyMemberAction(formData: FormData) {
 
   // 2. Crear las aristas (Edges) según la relación
   if (relationship === "father" || relationship === "mother") {
+    // 2.1 Vincular el nuevo padre/madre con el usuario actual
     await supabase.from("parent_child_edges").insert({
       parent_id: newPersonId,
       child_id: currentPersonId,
@@ -219,7 +220,55 @@ export async function createFamilyMemberAction(formData: FormData) {
       status: "confirmed",
       created_by_user_id: user.id,
     });
+
+    // 2.2 Si el usuario ya tiene otro progenitor registrado, vincular a ambos progenitores como pareja/cónyuges
+    const { data: existingParents } = await supabase
+      .from("parent_child_edges")
+      .select("parent_id")
+      .eq("child_id", currentPersonId);
+
+    if (existingParents && existingParents.length > 0) {
+      for (const ep of existingParents) {
+        if (ep.parent_id !== newPersonId) {
+          await supabase.from("union_edges").insert({
+            person_a_id: ep.parent_id,
+            person_b_id: newPersonId,
+            union_type: "married",
+            status: "confirmed",
+            created_by_user_id: user.id,
+          });
+        }
+      }
+    }
+
+    // 2.3 Si el usuario tiene hermanos registrados (hijos de otros progenitores o familiares), vincular también al nuevo progenitor
+    if (existingParents && existingParents.length > 0) {
+      const otherParentIds = existingParents
+        .map((p) => p.parent_id)
+        .filter((id) => id !== newPersonId);
+
+      if (otherParentIds.length > 0) {
+        const { data: siblings } = await supabase
+          .from("parent_child_edges")
+          .select("child_id")
+          .in("parent_id", otherParentIds)
+          .neq("child_id", currentPersonId);
+
+        if (siblings && siblings.length > 0) {
+          for (const sib of siblings) {
+            await supabase.from("parent_child_edges").insert({
+              parent_id: newPersonId,
+              child_id: sib.child_id,
+              relationship_type: "biological",
+              status: "confirmed",
+              created_by_user_id: user.id,
+            });
+          }
+        }
+      }
+    }
   } else if (relationship === "son" || relationship === "daughter") {
+    // 2.4 Vincular el hijo con el usuario actual
     await supabase.from("parent_child_edges").insert({
       parent_id: currentPersonId,
       child_id: newPersonId,
@@ -227,6 +276,32 @@ export async function createFamilyMemberAction(formData: FormData) {
       status: "confirmed",
       created_by_user_id: user.id,
     });
+
+    // Si el usuario tiene cónyuge/pareja, vincular al hijo también con la pareja
+    const { data: spousesA } = await supabase
+      .from("union_edges")
+      .select("person_b_id")
+      .eq("person_a_id", currentPersonId);
+
+    const { data: spousesB } = await supabase
+      .from("union_edges")
+      .select("person_a_id")
+      .eq("person_b_id", currentPersonId);
+
+    const spouseIds = [
+      ...(spousesA?.map((s) => s.person_b_id) ?? []),
+      ...(spousesB?.map((s) => s.person_a_id) ?? []),
+    ];
+
+    for (const spId of spouseIds) {
+      await supabase.from("parent_child_edges").insert({
+        parent_id: spId,
+        child_id: newPersonId,
+        relationship_type: "biological",
+        status: "confirmed",
+        created_by_user_id: user.id,
+      });
+    }
   } else if (relationship === "spouse" || relationship === "partner") {
     await supabase.from("union_edges").insert({
       person_a_id: currentPersonId,
@@ -236,7 +311,7 @@ export async function createFamilyMemberAction(formData: FormData) {
       created_by_user_id: user.id,
     });
   } else if (relationship === "brother" || relationship === "sister") {
-    // Buscar los padres del usuario actual para asociar al hermano
+    // Buscar los padres del usuario actual para asociar al hermano con ambos
     const { data: parents } = await supabase
       .from("parent_child_edges")
       .select("parent_id")

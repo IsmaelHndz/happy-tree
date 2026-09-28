@@ -2,7 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import type { FamilyGraphData, TreeNodeData, TreeEdgeData } from "../types/graph.types";
 
 /**
- * Consulta la base de datos y calcula la distribución espacial por generaciones del árbol familiar.
+ * Consulta la base de datos y calcula la distribución espacial por generaciones del árbol familiar,
+ * deduciendo automáticamente uniones conyugales entre co-padres que comparten hijos.
  */
 export async function getFamilyGraph(): Promise<FamilyGraphData> {
   const supabase = await createClient();
@@ -41,6 +42,14 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
     .from("union_edges")
     .select("id, person_a_id, person_b_id, union_type");
 
+  // Personas creadas por el usuario
+  const { data: createdPersons } = await supabase
+    .from("persons")
+    .select("id")
+    .eq("created_by_user_id", user.id);
+
+  const createdIds = createdPersons?.map((p) => p.id) ?? [];
+
   // Identificar relaciones directas respecto al usuario actual
   const parentIds = allParentEdges?.filter((e) => e.child_id === currentPersonId).map((e) => e.parent_id) ?? [];
   const childIds = allParentEdges?.filter((e) => e.parent_id === currentPersonId).map((e) => e.child_id) ?? [];
@@ -69,9 +78,17 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
     grandParentIds.push(...gps);
   }
 
-  // Todos los IDs involucrados en el subgrafo
+  // Todos los IDs involucrados en el subgrafo (incluyendo personas creadas por el usuario)
   const nodeIds = Array.from(
-    new Set([currentPersonId, ...parentIds, ...grandParentIds, ...childIds, ...spouseIds, ...siblingIds])
+    new Set([
+      currentPersonId,
+      ...parentIds,
+      ...grandParentIds,
+      ...childIds,
+      ...spouseIds,
+      ...siblingIds,
+      ...createdIds,
+    ])
   );
 
   // 5. Consultar los datos de todas las personas en el grafo
@@ -131,6 +148,10 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
       generation = 0;
       relationshipLabel = p.gender === "female" ? "Hermana" : "Hermano";
       relationshipCategory = "sibling";
+    } else {
+      generation = 0;
+      relationshipLabel = p.gender === "female" ? "Familiar (Femenino)" : "Familiar (Masculino)";
+      relationshipCategory = "sibling";
     }
 
     const token = tokens?.find((t) => t.person_id === p.id);
@@ -158,6 +179,7 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
   // 9. Filtrar y construir las aristas relevantes
   const edges: TreeEdgeData[] = [];
 
+  // 9.1 Aristas verticales registradas (padre -> hijo)
   allParentEdges?.forEach((e) => {
     if (nodeIds.includes(e.parent_id) && nodeIds.includes(e.child_id)) {
       edges.push({
@@ -169,6 +191,7 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
     }
   });
 
+  // 9.2 Aristas horizontales de unión registradas (parejas)
   allUnions?.forEach((u) => {
     if (nodeIds.includes(u.person_a_id) && nodeIds.includes(u.person_b_id)) {
       edges.push({
@@ -180,13 +203,49 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
     }
   });
 
+  // 9.3 DEDUCCIÓN AUTOMÁTICA DE UNIÓN ENTRE CO-PADRES:
+  // Si dos personas son progenitores del mismo hijo (ej. Juan y Ana con Lyndsay),
+  // y no tienen aún un registro en union_edges, deducimos su unión conyugal en el grafo.
+  const childToParents = new Map<string, string[]>();
+  allParentEdges?.forEach((e) => {
+    const list = childToParents.get(e.child_id) || [];
+    if (!list.includes(e.parent_id)) list.push(e.parent_id);
+    childToParents.set(e.child_id, list);
+  });
+
+  childToParents.forEach((pList) => {
+    if (pList.length >= 2) {
+      for (let i = 0; i < pList.length; i++) {
+        for (let j = i + 1; j < pList.length; j++) {
+          const pA = pList[i];
+          const pB = pList[j];
+          if (nodeIds.includes(pA) && nodeIds.includes(pB)) {
+            const alreadyExists = edges.some(
+              (ed) =>
+                ed.type === "union" &&
+                ((ed.sourceId === pA && ed.targetId === pB) ||
+                  (ed.sourceId === pB && ed.targetId === pA))
+            );
+            if (!alreadyExists) {
+              edges.push({
+                id: `coparent-${pA}-${pB}`,
+                sourceId: pA,
+                targetId: pB,
+                type: "union",
+              });
+            }
+          }
+        }
+      }
+    }
+  });
+
   // 10. Cálculo de Posiciones (Layout generacional en grilla centrada)
   const NODE_WIDTH = 220;
   const NODE_HEIGHT = 130;
   const GAP_X = 50;
   const GAP_Y = 140;
 
-  // Agrupar por generación (-2, -1, 0, 1)
   const generations = [-2, -1, 0, 1];
   const positionedNodes: TreeNodeData[] = [];
 

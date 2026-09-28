@@ -10,11 +10,7 @@ import {
   ShieldCheck,
   Clock,
   KeyRound,
-  Heart,
   CheckCircle,
-  HelpCircle,
-  User,
-  Users,
 } from "lucide-react";
 
 interface TreeCanvasProps {
@@ -37,7 +33,6 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   useEffect(() => {
     if (containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      // Centrar respecto a la generación 0 (y = 140)
       setPosition({
         x: rect.width / 2,
         y: rect.height / 3,
@@ -74,7 +69,6 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
     e.preventDefault();
     const zoomFactor = 1.1;
     const newScale = e.deltaY < 0 ? scale * zoomFactor : scale / zoomFactor;
-    // Límites de zoom entre 0.4x y 2.5x
     if (newScale >= 0.4 && newScale <= 2.5) {
       setScale(newScale);
     }
@@ -91,7 +85,6 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
     }
   };
 
-  // Mapa de nodos para búsqueda rápida de coordenadas por ID
   const nodeMap = new Map<string, TreeNodeData>();
   graph.nodes.forEach((n) => nodeMap.set(n.id, n));
 
@@ -107,7 +100,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
         isDragging ? "cursor-grabbing" : ""
       }`}
     >
-      {/* Patrón de fondo (grilla sutil) */}
+      {/* Patrón de fondo (grilla de puntos sutiles) */}
       <div
         className="absolute inset-0 pointer-events-none opacity-20"
         style={{
@@ -129,13 +122,9 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
         {/* Capa de Aristas SVG */}
         <svg className="overflow-visible pointer-events-none absolute top-0 left-0">
           <defs>
-            <linearGradient id="parentChildGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#10b981" stopOpacity="0.6" />
-              <stop offset="100%" stopColor="#14b8a6" stopOpacity="0.6" />
-            </linearGradient>
             <linearGradient id="unionGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.8" />
-              <stop offset="100%" stopColor="#ec4899" stopOpacity="0.8" />
+              <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.8" />
+              <stop offset="100%" stopColor="#f472b6" stopOpacity="0.8" />
             </linearGradient>
           </defs>
 
@@ -149,7 +138,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
             }
 
             if (edge.type === "parent-child") {
-              // Curva Bézier cúbica vertical uniendo padre (abajo) con hijo (arriba)
+              // Curva Bézier vertical continua (evita el bug de bounding box 0 usando color sólido reactivo)
               const x1 = source.x + NODE_WIDTH / 2;
               const y1 = source.y! + NODE_HEIGHT;
               const x2 = target.x + NODE_WIDTH / 2;
@@ -161,7 +150,8 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   key={edge.id}
                   d={`M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`}
                   fill="none"
-                  stroke="url(#parentChildGrad)"
+                  stroke="#10b981"
+                  strokeOpacity="0.8"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                 />
@@ -169,7 +159,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
             }
 
             if (edge.type === "union") {
-              // Línea horizontal entre cónyuges
+              // Línea horizontal entre cónyuges / co-padres
               const isLeft = source.x < target.x;
               const x1 = isLeft ? source.x + NODE_WIDTH : source.x;
               const y1 = source.y! + NODE_HEIGHT / 2;
@@ -207,6 +197,8 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           if (node.x === undefined || node.y === undefined) return null;
 
           const isSelf = node.relationshipCategory === "self";
+          const isFemale = node.gender === "female";
+          const isMale = node.gender === "male";
           const initials = `${node.firstName[0] || ""}${node.lastName[0] || ""}`.toUpperCase();
 
           return (
@@ -221,33 +213,58 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
               }}
               className={`tree-node-card group p-3.5 rounded-2xl border transition-all shadow-xl backdrop-blur-md flex flex-col justify-between cursor-default ${
                 isSelf
-                  ? "bg-gradient-to-br from-emerald-950/80 to-neutral-900 border-emerald-500/60 shadow-emerald-950/40 ring-2 ring-emerald-500/20"
-                  : node.isClaimed
-                  ? "bg-neutral-900/90 border-emerald-800/40 hover:border-emerald-600/60"
-                  : !node.isLiving
-                  ? "bg-neutral-900/60 border-neutral-800 opacity-75"
+                  ? "bg-gradient-to-br from-emerald-950/80 to-neutral-900 border-emerald-500/70 shadow-emerald-950/40 ring-2 ring-emerald-500/20"
+                  : isFemale
+                  ? "bg-neutral-900/90 border-neutral-800 hover:border-pink-500/50"
+                  : isMale
+                  ? "bg-neutral-900/90 border-neutral-800 hover:border-blue-500/50"
                   : "bg-neutral-900/90 border-neutral-800 hover:border-neutral-700"
               }`}
             >
               {/* Encabezado del Nodo */}
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2.5 overflow-hidden">
+                  {/* Avatar con gradiente según género */}
                   <div
-                    className={`w-8 h-8 rounded-xl font-bold text-xs flex items-center justify-center shrink-0 border ${
-                      isSelf
-                        ? "bg-emerald-600 text-white border-emerald-400/50"
-                        : node.gender === "female"
-                        ? "bg-teal-950 text-teal-300 border-teal-500/30"
-                        : "bg-neutral-800 text-neutral-200 border-neutral-700"
+                    className={`w-8 h-8 rounded-xl font-bold text-xs flex items-center justify-center shrink-0 border relative ${
+                      isFemale
+                        ? "bg-gradient-to-tr from-pink-950 via-rose-900 to-pink-800 border-pink-500/50 text-pink-200"
+                        : isMale
+                        ? "bg-gradient-to-tr from-blue-950 via-indigo-900 to-blue-800 border-blue-500/50 text-blue-200"
+                        : "bg-neutral-800 border-neutral-700 text-neutral-300"
                     }`}
                   >
                     {initials}
                   </div>
+
                   <div className="overflow-hidden">
-                    <h4 className="text-xs font-bold text-white truncate leading-tight">
-                      {node.firstName} {node.lastName}
-                    </h4>
-                    <span className="text-[10px] text-emerald-400 font-medium truncate block">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <h4 className="text-xs font-bold text-white truncate leading-tight">
+                        {node.firstName} {node.lastName}
+                      </h4>
+                      {/* Símbolo de Género */}
+                      {isFemale && (
+                        <span
+                          title="Mujer"
+                          className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[10px] shrink-0"
+                        >
+                          ♀
+                        </span>
+                      )}
+                      {isMale && (
+                        <span
+                          title="Hombre"
+                          className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-400 font-bold text-[10px] shrink-0"
+                        >
+                          ♂
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className={`text-[10px] font-medium truncate block ${
+                        isFemale ? "text-pink-400" : isMale ? "text-blue-400" : "text-emerald-400"
+                      }`}
+                    >
                       {node.relationshipLabel}
                     </span>
                   </div>
@@ -338,23 +355,27 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
         </div>
       </div>
 
-      {/* Leyenda de Convenciones */}
+      {/* Leyenda de Convenciones con Géneros */}
       <div className="tree-controls absolute bottom-6 left-6 hidden md:flex items-center gap-4 bg-neutral-900/90 border border-neutral-800 px-4 py-2 rounded-2xl shadow-xl backdrop-blur-md text-[11px] text-neutral-400 z-10">
         <div className="flex items-center gap-1.5">
+          <span className="w-3.5 h-3.5 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[10px] flex items-center justify-center">
+            ♀
+          </span>
+          <span>Mujer</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-400 font-bold text-[10px] flex items-center justify-center">
+            ♂
+          </span>
+          <span>Hombre</span>
+        </div>
+        <div className="flex items-center gap-1.5 border-l border-neutral-800 pl-3">
           <span className="w-2 h-2 rounded-full bg-emerald-400" />
           <span>Reclamado</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-teal-400" />
-          <span>Quórum 3/3</span>
-        </div>
-        <div className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-amber-400" />
-          <span>En Validación</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-neutral-500" />
-          <span>Fallecido</span>
+          <span>En Quórum</span>
         </div>
       </div>
 

@@ -100,24 +100,62 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
           {filteredMembers.map((member) => {
             const initials = `${member.firstName[0] || ""}${member.lastName[0] || ""}`.toUpperCase();
+            const isFemale = member.gender === "female";
+            const isMale = member.gender === "male";
 
             return (
               <div
                 key={member.id}
-                className="p-5 rounded-2xl bg-neutral-900/70 border border-neutral-800/80 hover:border-neutral-700 transition flex flex-col justify-between"
+                className={`p-5 rounded-2xl bg-neutral-900/70 border transition flex flex-col justify-between ${
+                  isFemale
+                    ? "border-neutral-800/80 hover:border-pink-500/50"
+                    : isMale
+                    ? "border-neutral-800/80 hover:border-blue-500/50"
+                    : "border-neutral-800/80 hover:border-neutral-700"
+                }`}
               >
                 <div>
                   {/* Cabecera de la Tarjeta */}
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-800/40 to-teal-700/40 border border-emerald-500/30 text-emerald-300 font-bold text-xs flex items-center justify-center">
+                      <div
+                        className={`w-10 h-10 rounded-xl font-bold text-xs flex items-center justify-center border ${
+                          isFemale
+                            ? "bg-gradient-to-tr from-pink-950 via-rose-900 to-pink-800 border-pink-500/50 text-pink-200"
+                            : isMale
+                            ? "bg-gradient-to-tr from-blue-950 via-indigo-900 to-blue-800 border-blue-500/50 text-blue-200"
+                            : "bg-neutral-800 border-neutral-700 text-neutral-300"
+                        }`}
+                      >
                         {initials}
                       </div>
                       <div>
-                        <h4 className="text-sm font-bold text-white leading-tight">
-                          {member.firstName} {member.lastName}
-                        </h4>
-                        <span className="text-[11px] text-emerald-400 font-medium">
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-sm font-bold text-white leading-tight">
+                            {member.firstName} {member.lastName}
+                          </h4>
+                          {isFemale && (
+                            <span
+                              title="Mujer"
+                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[10px] shrink-0"
+                            >
+                              ♀
+                            </span>
+                          )}
+                          {isMale && (
+                            <span
+                              title="Hombre"
+                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-400 font-bold text-[10px] shrink-0"
+                            >
+                              ♂
+                            </span>
+                          )}
+                        </div>
+                        <span
+                          className={`text-[11px] font-medium ${
+                            isFemale ? "text-pink-400" : isMale ? "text-blue-400" : "text-emerald-400"
+                          }`}
+                        >
                           {member.relationshipLabel}
                         </span>
                       </div>
