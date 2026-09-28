@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { checkUserZeroExists } from "@/features/auth/actions";
+import { getFamilyMembers } from "@/features/genealogy/actions";
+import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
+import { FamilyDirectory } from "@/features/genealogy/components/family-directory";
+import type { FamilyMemberItem } from "@/features/genealogy/types";
 import {
   GitFork,
   Shield,
@@ -11,7 +15,6 @@ import {
   LogOut,
   UserCheck,
   Award,
-  PlusCircle,
   KeyRound,
 } from "lucide-react";
 
@@ -23,7 +26,7 @@ export default async function Home() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { exists: userZeroExists, userZeroName } = await checkUserZeroExists();
+  const { exists: userZeroExists } = await checkUserZeroExists();
 
   let userProfile: {
     personName: string;
@@ -31,6 +34,8 @@ export default async function Home() {
     endorsementsCount: number;
     canInvite: boolean;
   } | null = null;
+
+  let familyMembers: FamilyMemberItem[] = [];
 
   if (user) {
     const { data: profile } = await supabase
@@ -55,13 +60,15 @@ export default async function Home() {
         endorsementsCount: inviteResult?.endorsements ?? 0,
         canInvite: inviteResult?.can_invite ?? profile.is_user_zero,
       };
+
+      familyMembers = await getFamilyMembers();
     }
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-between p-6 sm:p-12 selection:bg-emerald-500 selection:text-black">
-      {/* Header / Brand */}
-      <header className="w-full max-w-5xl flex items-center justify-between border-b border-neutral-800/80 pb-6">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col justify-between p-6 sm:p-12 selection:bg-emerald-500 selection:text-black">
+      {/* Cabecera */}
+      <header className="w-full max-w-6xl mx-auto flex items-center justify-between border-b border-neutral-800/80 pb-6 mb-8">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 text-white font-bold text-lg">
             HT
@@ -113,85 +120,91 @@ export default async function Home() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="w-full max-w-5xl my-auto py-12 flex flex-col items-center text-center">
+      {/* Contenido Principal */}
+      <main className="w-full max-w-6xl mx-auto flex-1">
         {user && userProfile ? (
-          /* Panel para Usuario Autenticado */
-          <div className="w-full max-w-2xl bg-neutral-900/80 border border-neutral-800 rounded-3xl p-8 shadow-2xl backdrop-blur-md text-left">
-            <div className="flex items-start justify-between border-b border-neutral-800 pb-6 mb-6">
-              <div>
-                <span className="text-xs font-mono text-emerald-400 bg-emerald-950/80 border border-emerald-800/50 px-2.5 py-0.5 rounded-full uppercase">
-                  {userProfile.isUserZero ? "Usuario Cero / Fundador" : "Familiar Validado"}
-                </span>
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white mt-2">
-                  Hola, {userProfile.personName}
-                </h1>
-                <p className="text-xs text-neutral-400 mt-1">
-                  Tu ficha genealógica está reclamada y activa en el árbol familiar.
-                </p>
-              </div>
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                <UserCheck className="w-6 h-6" />
-              </div>
-            </div>
-
-            {/* Estado del Modelo de Confianza */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-              <div className="p-4 rounded-2xl bg-neutral-950/60 border border-neutral-800">
-                <div className="flex items-center gap-2 text-xs text-neutral-400 mb-1">
-                  <Award className="w-4 h-4 text-emerald-400" />
-                  <span>Reconocimientos Familiares</span>
-                </div>
-                <div className="text-xl font-bold text-white">
-                  {userProfile.isUserZero ? "Ilimitados (Fundador)" : `${userProfile.endorsementsCount} / 3`}
-                </div>
-                <div className="text-[11px] text-neutral-500 mt-1">
-                  {userProfile.isUserZero
-                    ? "Permiso total de expansión genealógica"
-                    : userProfile.canInvite
-                    ? "¡Umbral de confianza alcanzado para invitar!"
-                    : "Necesitas 3 endosos para enviar invitaciones"}
-                </div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-neutral-950/60 border border-neutral-800">
-                <div className="flex items-center gap-2 text-xs text-neutral-400 mb-1">
-                  <KeyRound className="w-4 h-4 text-teal-400" />
-                  <span>Capacidad de Invitación</span>
-                </div>
-                <div className="text-xl font-bold text-white flex items-center gap-2">
-                  {userProfile.canInvite ? (
-                    <span className="text-emerald-400">Habilitada</span>
-                  ) : (
-                    <span className="text-amber-400">Restringida</span>
-                  )}
-                </div>
-                <div className="text-[11px] text-neutral-500 mt-1">
-                  Tokens de alta entropía de un solo uso
-                </div>
-              </div>
-            </div>
-
-            {/* Aviso de Siguiente Fase */}
-            <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800/80 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center">
-                  <GitFork className="w-5 h-5" />
-                </div>
+          /* Panel del Usuario Autenticado */
+          <div className="space-y-8">
+            {/* Tarjeta de Identidad y Métricas de Confianza */}
+            <div className="bg-neutral-900/80 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-md">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800 pb-6 mb-6">
                 <div>
-                  <div className="text-xs font-semibold text-white">
-                    Fase 2 de Autenticación Completada
+                  <span className="text-xs font-mono text-emerald-400 bg-emerald-950/80 border border-emerald-800/50 px-2.5 py-0.5 rounded-full uppercase">
+                    {userProfile.isUserZero ? "Usuario Cero / Fundador" : "Familiar Validado"}
+                  </span>
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white mt-2">
+                    Hola, {userProfile.personName}
+                  </h1>
+                  <p className="text-xs text-neutral-400 mt-1">
+                    Tu ficha genealógica está reclamada y activa en el árbol familiar.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <AddMemberModal />
+                </div>
+              </div>
+
+              {/* Métricas del Modelo de Confianza */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 rounded-2xl bg-neutral-950/60 border border-neutral-800">
+                  <div className="flex items-center gap-2 text-xs text-neutral-400 mb-1">
+                    <Award className="w-4 h-4 text-emerald-400" />
+                    <span>Reconocimientos Familiares</span>
                   </div>
-                  <div className="text-[11px] text-neutral-400">
-                    Siguiente: Creación de fichas familiares previas y generación de enlaces de invitación.
+                  <div className="text-xl font-bold text-white">
+                    {userProfile.isUserZero ? "Ilimitados (Fundador)" : `${userProfile.endorsementsCount} / 3`}
+                  </div>
+                  <div className="text-[11px] text-neutral-500 mt-1">
+                    {userProfile.isUserZero
+                      ? "Permiso total de expansión genealógica"
+                      : userProfile.canInvite
+                      ? "¡Umbral de confianza alcanzado para invitar!"
+                      : "Necesitas 3 endosos para enviar invitaciones"}
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-neutral-950/60 border border-neutral-800">
+                  <div className="flex items-center gap-2 text-xs text-neutral-400 mb-1">
+                    <KeyRound className="w-4 h-4 text-teal-400" />
+                    <span>Capacidad de Invitación</span>
+                  </div>
+                  <div className="text-xl font-bold text-white flex items-center gap-2">
+                    {userProfile.canInvite ? (
+                      <span className="text-emerald-400">Habilitada</span>
+                    ) : (
+                      <span className="text-amber-400">Restringida</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-neutral-500 mt-1">
+                    Tokens de alta entropía de un solo uso
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Directorio de Familiares */}
+            <div className="bg-neutral-900/50 border border-neutral-800/80 rounded-3xl p-6 sm:p-8">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+                <div>
+                  <h2 className="text-lg font-bold text-white">
+                    Directorio Familiar & Fichas Genealógicas
+                  </h2>
+                  <p className="text-xs text-neutral-400">
+                    Nodos en tu rama genealógica vinculados por filiaciones de parentesco o uniones conyugales.
+                  </p>
+                </div>
+                <div className="text-xs font-mono text-neutral-400 bg-neutral-950 px-3 py-1.5 rounded-xl border border-neutral-800">
+                  Total familiares: {familyMembers.length}
+                </div>
+              </div>
+
+              <FamilyDirectory members={familyMembers} />
             </div>
           </div>
         ) : (
           /* Portal Público / Invitación */
-          <>
+          <div className="py-12 flex flex-col items-center text-center">
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 mb-8 backdrop-blur-sm">
               <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
               <span>Genealogía Colaborativa &bull; Red Privada por Invitación Criptográfica</span>
@@ -208,7 +221,6 @@ export default async function Home() {
               Plataforma basada en el <strong>Claiming Pattern</strong>: los nodos genealógicos se crean como registros previos y se reclaman mediante enlaces únicos con tokens criptográficos de un solo uso.
             </p>
 
-            {/* Call to action dinámico */}
             <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center items-center">
               {!userZeroExists ? (
                 <Link
@@ -239,7 +251,6 @@ export default async function Home() {
               </Link>
             </div>
 
-            {/* Grid de Principios del Sistema */}
             <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-5 w-full text-left">
               <div className="p-6 rounded-2xl bg-neutral-900/60 border border-neutral-800/80 hover:border-neutral-700 transition">
                 <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mb-4">
@@ -271,17 +282,17 @@ export default async function Home() {
                 </p>
               </div>
             </div>
-          </>
+          </div>
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="w-full max-w-5xl pt-6 border-t border-neutral-900 flex flex-col sm:flex-row items-center justify-between text-xs text-neutral-500">
+      {/* Pie */}
+      <footer className="w-full max-w-6xl mx-auto pt-8 border-t border-neutral-900 flex flex-col sm:flex-row items-center justify-between text-xs text-neutral-500 mt-12">
         <div>
           Happy Tree &bull; Red Familiar Privada
         </div>
         <div className="mt-2 sm:mt-0 font-mono text-[11px]">
-          {userZeroExists ? `Árbol Fundado` : "Pendiente de Inicializar"}
+          {user ? `Ficha personal activa` : "Acceso cerrado"}
         </div>
       </footer>
     </div>
