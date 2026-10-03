@@ -68,19 +68,21 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
   // 3. Consultar parejas / uniones
   const { data: unionsAsA } = await supabase
     .from("union_edges")
-    .select("id, person_a_id, person_b_id, union_type")
+    .select("id, person_a_id, person_b_id, union_type, status")
     .eq("person_a_id", currentPersonId);
 
   const { data: unionsAsB } = await supabase
     .from("union_edges")
-    .select("id, person_a_id, person_b_id, union_type")
+    .select("id, person_a_id, person_b_id, union_type, status")
     .eq("person_b_id", currentPersonId);
 
-  const allUserUnions = [...(unionsAsA ?? []), ...(unionsAsB ?? [])];
+  const allUserUnions = [...(unionsAsA ?? []), ...(unionsAsB ?? [])].filter(
+    (u) => u.status !== "rejected"
+  );
 
   const spouseIds = [
-    ...(unionsAsA?.map((u) => u.person_b_id) ?? []),
-    ...(unionsAsB?.map((u) => u.person_a_id) ?? []),
+    ...(unionsAsA?.filter((u) => u.status !== "rejected").map((u) => u.person_b_id) ?? []),
+    ...(unionsAsB?.filter((u) => u.status !== "rejected").map((u) => u.person_a_id) ?? []),
   ];
 
   // 4. Personas creadas por el usuario (para no perder ninguna)
@@ -621,11 +623,11 @@ export async function updateUnionStatusAction({
 export async function dissolveUnionAction({
   personAId,
   personBId,
-  forceRemove = false,
+  deletePersonId,
 }: {
   personAId: string;
   personBId: string;
-  forceRemove?: boolean;
+  deletePersonId?: string;
 }) {
   const supabase = await createClient();
   const {
@@ -676,12 +678,13 @@ export async function dissolveUnionAction({
     return { error: "No se encontró el vínculo de pareja a disolver." };
   }
 
-  if (sharedChildren.length > 0 && !forceRemove) {
-    // Si tienen hijos y no se forzó el borrado, marcamos como separados para conservar la filiación de los hijos
+  if (sharedChildren.length > 0) {
+    // Si tienen hijos, marcamos como separados para conservar la filiación de los hijos en el árbol
     await supabase
       .from("union_edges")
       .update({
         union_type: "separated",
+        status: "confirmed",
         updated_at: new Date().toISOString(),
       })
       .eq("id", unionRecord.id);
@@ -696,14 +699,48 @@ export async function dissolveUnionAction({
     };
   }
 
-  // Si no tienen hijos en común (o forceRemove = true), se elimina completamente el registro
+  // Si no tienen hijos en común:
+  // Intentar eliminar físicamente el registro de la unión
   const { error: deleteError } = await supabase
     .from("union_edges")
     .delete()
     .eq("id", unionRecord.id);
 
+  // Fallback si la política DELETE en Supabase remoto aún no estuviera aplicada
   if (deleteError) {
-    return { error: `Error disolviendo la pareja: ${deleteError.message}` };
+    await supabase
+      .from("union_edges")
+      .update({
+        union_type: "divorced",
+        status: "rejected",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", unionRecord.id);
+  }
+
+  // Si se solicitó eliminar también la ficha (por ser innecesaria tras la ruptura)
+  let personDeleted = false;
+  if (deletePersonId) {
+    const { data: targetPerson } = await supabase
+      .from("persons")
+      .select("id, is_claimed, created_by_user_id")
+      .eq("id", deletePersonId)
+      .single();
+
+    if (
+      targetPerson &&
+      !targetPerson.is_claimed &&
+      (isUserZero || targetPerson.created_by_user_id === user.id)
+    ) {
+      const { error: personDelError } = await supabase
+        .from("persons")
+        .delete()
+        .eq("id", deletePersonId);
+
+      if (!personDelError) {
+        personDeleted = true;
+      }
+    }
   }
 
   revalidatePath("/");
@@ -712,7 +749,10 @@ export async function dissolveUnionAction({
   return {
     success: true,
     hasSharedChildren: false,
-    message: "Vínculo de pareja disuelto y eliminado exitosamente.",
+    personDeleted,
+    message: personDeleted
+      ? "Ficha y vínculo eliminados por completo."
+      : "Vínculo de pareja disuelto. Ya no aparecerá en tu árbol.",
   };
 }
 

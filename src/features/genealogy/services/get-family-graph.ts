@@ -85,7 +85,7 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
   // 5. Consultar todas las uniones conyugales
   const { data: allUnions } = await supabase
     .from("union_edges")
-    .select("id, person_a_id, person_b_id, union_type");
+    .select("id, person_a_id, person_b_id, union_type, status");
 
   // Personas creadas por el usuario autenticado
   const { data: createdPersons } = await supabase
@@ -95,13 +95,39 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
 
   const createdIds = createdPersons?.map((p) => p.id) ?? [];
 
+  // Helper para verificar si dos personas comparten hijos registrados
+  const hasSharedChildren = (personA: string, personB: string): boolean => {
+    const kidsA = allParentEdges?.filter((e) => e.parent_id === personA).map((e) => e.child_id) ?? [];
+    const kidsB = allParentEdges?.filter((e) => e.parent_id === personB).map((e) => e.child_id) ?? [];
+    return kidsA.some((id) => kidsB.includes(id));
+  };
+
+  // Filtrar uniones que deben mostrarse en el árbol genealógico:
+  // - Se ignoran uniones rechazadas/disueltas (status = 'rejected').
+  // - Si están 'separated' o 'divorced', SOLO se muestran si tienen hijos en común.
+  const isUnionVisibleInTree = (u: {
+    person_a_id: string;
+    person_b_id: string;
+    union_type: string;
+    status?: string | null;
+  }): boolean => {
+    if (u.status === "rejected") return false;
+    const isEx = u.union_type === "separated" || u.union_type === "divorced";
+    if (isEx) {
+      return hasSharedChildren(u.person_a_id, u.person_b_id);
+    }
+    return true;
+  };
+
+  const treeVisibleUnions = allUnions?.filter(isUnionVisibleInTree) ?? [];
+
   // 6. Identificar relaciones directas respecto al nodo central (centerPersonId)
   const parentIds = allParentEdges?.filter((e) => e.child_id === centerPersonId).map((e) => e.parent_id) ?? [];
   const childIds = allParentEdges?.filter((e) => e.parent_id === centerPersonId).map((e) => e.child_id) ?? [];
 
   const spouseIds = [
-    ...(allUnions?.filter((u) => u.person_a_id === centerPersonId).map((u) => u.person_b_id) ?? []),
-    ...(allUnions?.filter((u) => u.person_b_id === centerPersonId).map((u) => u.person_a_id) ?? []),
+    ...treeVisibleUnions.filter((u) => u.person_a_id === centerPersonId).map((u) => u.person_b_id),
+    ...treeVisibleUnions.filter((u) => u.person_b_id === centerPersonId).map((u) => u.person_a_id),
   ];
 
   // Hermanos (hijos de los padres del nodo central que no sean el nodo central)
@@ -127,8 +153,8 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
   const siblingSpouseIds: string[] = [];
   siblingIds.forEach((sibId) => {
     const sSpouses = [
-      ...(allUnions?.filter((u) => u.person_a_id === sibId).map((u) => u.person_b_id) ?? []),
-      ...(allUnions?.filter((u) => u.person_b_id === sibId).map((u) => u.person_a_id) ?? []),
+      ...treeVisibleUnions.filter((u) => u.person_a_id === sibId).map((u) => u.person_b_id),
+      ...treeVisibleUnions.filter((u) => u.person_b_id === sibId).map((u) => u.person_a_id),
     ];
     siblingSpouseIds.push(...sSpouses);
   });
@@ -180,17 +206,25 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
     let relationshipLabel = "Familiar";
     let relationshipCategory: TreeNodeData["relationshipCategory"] = "sibling";
 
+    // Buscar la unión conyugal de esta persona (con la persona central o su pareja respectiva)
     const matchedUnion = allUnions?.find(
       (u) =>
-        (u.person_a_id === centerPersonId && u.person_b_id === p.id) ||
-        (u.person_b_id === centerPersonId && u.person_a_id === p.id)
+        u.status !== "rejected" &&
+        (u.person_a_id === p.id || u.person_b_id === p.id) &&
+        (u.person_a_id === centerPersonId || u.person_b_id === centerPersonId || p.id !== centerPersonId)
     );
 
-    const unionInfo = matchedUnion
+    const partnerId = matchedUnion
+      ? matchedUnion.person_a_id === p.id
+        ? matchedUnion.person_b_id
+        : matchedUnion.person_a_id
+      : null;
+
+    const unionInfo = matchedUnion && partnerId
       ? {
           id: matchedUnion.id,
           unionType: matchedUnion.union_type,
-          partnerId: centerPersonId,
+          partnerId,
         }
       : null;
 
@@ -279,8 +313,8 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
     }
   });
 
-  // 11.2 Aristas horizontales de unión registradas (parejas)
-  allUnions?.forEach((u) => {
+  // 11.2 Aristas horizontales de unión registradas (parejas visibles en árbol)
+  treeVisibleUnions.forEach((u) => {
     if (nodeIds.includes(u.person_a_id) && nodeIds.includes(u.person_b_id)) {
       edges.push({
         id: `union-${u.id}`,
@@ -342,14 +376,19 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
     const count = genNodes.length;
     if (count === 0) return;
 
-    // Ordenar generación 0: [Persona central, Pareja, Hermanos...]
+    // Ordenar generación 0: [Pareja de self, Self, Hermanos, Parejas de hermanos]
+    // Esto garantiza que el grupo de hermanos quede contiguo y que la horquilla parental
+    // descienda exclusivamente sobre los hermanos sin atravesar tarjetas de parejas.
     if (gen === 0) {
       genNodes.sort((a, b) => {
-        if (a.relationshipCategory === "self") return -1;
-        if (b.relationshipCategory === "self") return 1;
-        if (a.relationshipCategory === "spouse" && spouseIds.includes(a.id)) return -0.5;
-        if (b.relationshipCategory === "spouse" && spouseIds.includes(b.id)) return 0.5;
-        return 0;
+        const getRank = (n: typeof rawNodes[0]) => {
+          if (n.relationshipCategory === "spouse" && spouseIds.includes(n.id)) return 1;
+          if (n.relationshipCategory === "self") return 2;
+          if (n.relationshipCategory === "sibling") return 3;
+          if (n.relationshipCategory === "spouse" && siblingSpouseIds.includes(n.id)) return 4;
+          return 5;
+        };
+        return getRank(a) - getRank(b);
       });
     }
 

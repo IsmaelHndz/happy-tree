@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   updateFamilyMemberAction,
   deleteFamilyMemberAction,
@@ -50,6 +51,7 @@ interface EditMemberModalProps {
 }
 
 export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProps) {
+  const router = useRouter();
   const [firstName, setFirstName] = useState(member.firstName);
   const [lastName, setLastName] = useState(member.lastName);
   const [maidenName, setMaidenName] = useState(member.maidenName || "");
@@ -100,6 +102,7 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
     if (result.error) {
       setError(result.error);
     } else {
+      router.refresh();
       setSuccess(true);
       setTimeout(() => {
         onClose();
@@ -123,17 +126,14 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
     if (res.error) {
       setError(res.error);
     } else {
+      router.refresh();
       setUnionSuccessMessage("Estado de pareja actualizado correctamente.");
       setTimeout(() => setUnionSuccessMessage(null), 3000);
     }
   };
 
-  const handleDissolveUnion = async () => {
+  const handleDissolveUnion = async (deletePersonEntirely = false) => {
     if (!member.unionInfo) return;
-    if (!confirmDissolve) {
-      setConfirmDissolve(true);
-      return;
-    }
 
     setIsDissolvingUnion(true);
     setError(null);
@@ -142,6 +142,7 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
     const res = await dissolveUnionAction({
       personAId: member.id,
       personBId: member.unionInfo.partnerId,
+      deletePersonId: deletePersonEntirely ? member.id : undefined,
     });
 
     setIsDissolvingUnion(false);
@@ -150,10 +151,16 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
     if (res.error) {
       setError(res.error);
     } else {
-      setUnionSuccessMessage(res.message || "Vínculo de pareja disuelto.");
-      setTimeout(() => {
-        onClose();
-      }, 900);
+      router.refresh();
+      if (res.hasSharedChildren) {
+        setUnionType("separated");
+        setUnionSuccessMessage(res.message);
+      } else {
+        setUnionSuccessMessage(res.message || "Vínculo de pareja disuelto.");
+        setTimeout(() => {
+          onClose();
+        }, 700);
+      }
     }
   };
 
@@ -173,6 +180,7 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
       setError(result.error);
       setConfirmDelete(false);
     } else {
+      router.refresh();
       onClose();
     }
   };
@@ -287,39 +295,68 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
             </div>
 
             {/* Disolver / Desvincular Pareja */}
-            <div className="pt-2 border-t border-neutral-900 flex items-center justify-between">
-              <span className="text-[11px] text-neutral-400">
-                ¿Ya no son pareja?
-              </span>
+            <div className="pt-2 border-t border-neutral-900 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-neutral-400">
+                  ¿Ya no son pareja?
+                </span>
 
-              {confirmDissolve ? (
-                <div className="flex items-center gap-2">
+                {!confirmDissolve && (
                   <button
                     type="button"
-                    disabled={isDissolvingUnion}
-                    onClick={handleDissolveUnion}
-                    className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1"
+                    onClick={() => setConfirmDissolve(true)}
+                    className="text-xs text-red-400 hover:text-red-300 hover:underline flex items-center gap-1 font-medium"
                   >
-                    {isDissolvingUnion ? <Loader2 className="w-3 h-3 animate-spin" /> : <HeartCrack className="w-3 h-3" />}
-                    <span>¿Confirmar fin de pareja?</span>
+                    <HeartCrack className="w-3.5 h-3.5" />
+                    <span>Disolver vínculo de pareja</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDissolve(false)}
-                    className="text-xs text-neutral-400 hover:text-white"
-                  >
-                    Cancelar
-                  </button>
+                )}
+              </div>
+
+              {confirmDissolve && (
+                <div className="p-3 rounded-xl bg-red-950/40 border border-red-800/60 space-y-2.5 animate-in fade-in">
+                  <p className="text-xs text-red-200 font-medium">
+                    ¿Cómo deseas gestionar esta separación en tu árbol genealógico?
+                  </p>
+                  <p className="text-[11px] text-neutral-400">
+                    Si no tienen hijos en común, dejará de aparecer en tu mapa visual para mantener tu árbol cómodo y privado.
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={isDissolvingUnion}
+                      onClick={() => handleDissolveUnion(false)}
+                      className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow-sm"
+                    >
+                      {isDissolvingUnion ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <HeartCrack className="w-3 h-3" />
+                      )}
+                      <span>Quitar de mi árbol</span>
+                    </button>
+
+                    {!member.isClaimed && (
+                      <button
+                        type="button"
+                        disabled={isDissolvingUnion}
+                        onClick={() => handleDissolveUnion(true)}
+                        className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-red-300 text-xs font-medium rounded-lg border border-red-800/40 transition"
+                      >
+                        Eliminar ficha completa
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDissolve(false)}
+                      className="px-2.5 py-1.5 text-xs text-neutral-400 hover:text-white"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
                 </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmDissolve(true)}
-                  className="text-xs text-red-400 hover:text-red-300 hover:underline flex items-center gap-1 font-medium"
-                >
-                  <HeartCrack className="w-3.5 h-3.5" />
-                  <span>Disolver vínculo de pareja</span>
-                </button>
               )}
             </div>
           </div>
