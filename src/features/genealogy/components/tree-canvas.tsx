@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { FamilyGraphData, TreeNodeData } from "../types/graph.types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
+import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import {
   ZoomIn,
   ZoomOut,
@@ -11,6 +12,7 @@ import {
   Clock,
   KeyRound,
   CheckCircle,
+  Pencil,
 } from "lucide-react";
 
 interface TreeCanvasProps {
@@ -23,6 +25,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [activeInviteMember, setActiveInviteMember] = useState<TreeNodeData | null>(null);
+  const [activeEditMember, setActiveEditMember] = useState<TreeNodeData | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -270,11 +273,23 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   </div>
                 </div>
 
-                {isSelf && (
-                  <span className="text-[9px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                    Tú
-                  </span>
-                )}
+                <div className="flex items-center gap-1 shrink-0">
+                  {isSelf && (
+                    <span className="text-[9px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      Tú
+                    </span>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveEditMember(node);
+                    }}
+                    title="Editar ficha"
+                    className="p-1 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
 
               {/* Estado y Quorum */}
@@ -378,6 +393,15 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           <span>En Quórum</span>
         </div>
       </div>
+
+      {/* Modal de Edición */}
+      {activeEditMember && (
+        <EditMemberModal
+          member={activeEditMember}
+          isOpen={Boolean(activeEditMember)}
+          onClose={() => setActiveEditMember(null)}
+        />
+      )}
 
       {/* Modal de Invitación */}
       {activeInviteMember && (

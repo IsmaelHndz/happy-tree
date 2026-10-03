@@ -6,7 +6,7 @@ import { Sparkles, ShieldCheck } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 export default async function SetupZeroPage() {
-  const { exists, userZeroName } = await checkUserZeroExists();
+  const { exists } = await checkUserZeroExists();
 
   if (exists) {
     redirect("/login?notice=user_zero_already_configured");

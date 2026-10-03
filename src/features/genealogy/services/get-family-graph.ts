@@ -94,7 +94,7 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
   // 5. Consultar los datos de todas las personas en el grafo
   const { data: persons } = await supabase
     .from("persons")
-    .select("id, first_name, last_name, gender, birth_date, is_living, is_claimed")
+    .select("id, first_name, last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
     .in("id", nodeIds);
 
   if (!persons) return { nodes: [], edges: [] };
@@ -161,10 +161,15 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
       id: p.id,
       firstName: p.first_name,
       lastName: p.last_name,
+      maidenName: p.maiden_name,
       gender: p.gender,
       birthDate: p.birth_date,
+      deathDate: p.death_date,
       isLiving: p.is_living,
+      birthPlace: p.birth_place,
+      bio: p.bio,
       isClaimed: p.is_claimed,
+      createdByUserId: p.created_by_user_id,
       generation,
       relationshipLabel,
       relationshipCategory,

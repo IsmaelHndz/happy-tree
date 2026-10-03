@@ -1,12 +1,12 @@
 import { checkUserZeroExists } from "@/features/auth/actions";
 import { LoginForm } from "./login-form";
 import Link from "next/link";
-import { Shield, Sparkles, ArrowRight, Lock } from "lucide-react";
+import { Shield, Sparkles, ArrowRight } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {
-  const { exists, userZeroName } = await checkUserZeroExists();
+  const { exists } = await checkUserZeroExists();
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-6 selection:bg-emerald-500 selection:text-black">

@@ -14,16 +14,34 @@ export interface FamilyMemberItem {
   id: string;
   firstName: string;
   lastName: string;
+  maidenName?: string | null;
   gender: Gender;
   birthDate: string | null;
+  deathDate?: string | null;
   isLiving: boolean;
+  birthPlace?: string | null;
+  bio?: string | null;
   isClaimed: boolean;
+  createdByUserId?: string | null;
   relationshipLabel: string;
   relationshipCategory: "parent" | "child" | "spouse" | "sibling" | "other";
   invitationStatus?: InvitationStatus | null;
   invitationToken?: string | null;
   invitationExpiresAt?: string | null;
   invitedEmail?: string | null;
+}
+
+export interface UpdateFamilyMemberInput {
+  personId: string;
+  firstName: string;
+  lastName: string;
+  maidenName?: string | null;
+  gender: Gender;
+  birthDate?: string | null;
+  deathDate?: string | null;
+  isLiving: boolean;
+  birthPlace?: string | null;
+  bio?: string | null;
 }
 
 export interface CreateFamilyMemberInput {

@@ -4,7 +4,7 @@ import { TreeCanvas } from "@/features/genealogy/components/tree-canvas";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { GitFork, ArrowLeft, Users, Sparkles, LogOut, Database } from "lucide-react";
+import { GitFork, Users, LogOut } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 

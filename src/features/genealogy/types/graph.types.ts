@@ -4,10 +4,15 @@ export interface TreeNodeData {
   id: string;
   firstName: string;
   lastName: string;
+  maidenName?: string | null;
   gender: Gender;
   birthDate: string | null;
+  deathDate?: string | null;
   isLiving: boolean;
+  birthPlace?: string | null;
+  bio?: string | null;
   isClaimed: boolean;
+  createdByUserId?: string | null;
   generation: number; // -1: padres/ancestros, 0: usuario/pareja/hermanos, 1: hijos
   relationshipLabel: string;
   relationshipCategory: "self" | "parent" | "child" | "spouse" | "sibling";

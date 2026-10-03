@@ -13,7 +13,6 @@ import {
   Sparkles,
   ArrowRight,
   LogOut,
-  UserCheck,
   Award,
   KeyRound,
 } from "lucide-react";

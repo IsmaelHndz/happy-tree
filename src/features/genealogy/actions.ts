@@ -100,7 +100,7 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
   // 5. Consultar los datos de las personas
   const { data: persons } = await supabase
     .from("persons")
-    .select("id, first_name, last_name, gender, birth_date, is_living, is_claimed")
+    .select("id, first_name, last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
     .in("id", allFamilyIds);
 
   if (!persons) return [];
@@ -137,10 +137,15 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
       id: p.id,
       firstName: p.first_name,
       lastName: p.last_name,
+      maidenName: p.maiden_name,
       gender: p.gender,
       birthDate: p.birth_date,
+      deathDate: p.death_date,
       isLiving: p.is_living,
+      birthPlace: p.birth_place,
+      bio: p.bio,
       isClaimed: p.is_claimed,
+      createdByUserId: p.created_by_user_id,
       relationshipLabel,
       relationshipCategory,
       invitationStatus: inviteToken?.status ?? null,
@@ -350,6 +355,7 @@ export async function createFamilyMemberAction(formData: FormData) {
   }
 
   revalidatePath("/");
+  revalidatePath("/tree");
 
   return {
     success: true,
@@ -357,3 +363,162 @@ export async function createFamilyMemberAction(formData: FormData) {
     invitationToken: generatedToken,
   };
 }
+
+/**
+ * Server Action: Actualizar la información de una ficha familiar existente.
+ */
+export async function updateFamilyMemberAction(formData: FormData) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Debes estar autenticado para actualizar fichas familiares." };
+  }
+
+  const personId = (formData.get("person_id") as string)?.trim();
+  const firstName = (formData.get("first_name") as string)?.trim();
+  const lastName = (formData.get("last_name") as string)?.trim();
+  const maidenName = (formData.get("maiden_name") as string)?.trim() || null;
+  const gender = (formData.get("gender") as Gender) || "unknown";
+  const birthDate = (formData.get("birth_date") as string) || null;
+  const isLiving = formData.get("is_living") === "true";
+  const deathDate = isLiving ? null : (formData.get("death_date") as string) || null;
+  const birthPlace = (formData.get("birth_place") as string)?.trim() || null;
+  const bio = (formData.get("bio") as string)?.trim() || null;
+
+  if (!personId) {
+    return { error: "El identificador de la persona es obligatorio." };
+  }
+
+  if (!firstName || !lastName) {
+    return { error: "El nombre y los apellidos son obligatorios." };
+  }
+
+  // Validación de coherencia en fechas
+  if (!isLiving && deathDate && birthDate && deathDate < birthDate) {
+    return { error: "La fecha de defunción no puede ser anterior a la fecha de nacimiento." };
+  }
+
+  // Consultar perfil del usuario y estado del nodo
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  const { data: targetPerson, error: fetchError } = await supabase
+    .from("persons")
+    .select("id, is_claimed, claimed_by_user_id, created_by_user_id")
+    .eq("id", personId)
+    .single();
+
+  if (fetchError || !targetPerson) {
+    return { error: "No se encontró la ficha genealógica especificada." };
+  }
+
+  // Control de permisos:
+  // 1. Usuario Cero puede editar cualquier ficha.
+  // 2. Si la ficha está reclamada, solo el usuario reclamante puede editar su propia información.
+  // 3. Si la ficha no está reclamada, el creador puede editarla.
+  const isUserZero = profile?.is_user_zero ?? false;
+  const isClaimedOwner = targetPerson.is_claimed && targetPerson.claimed_by_user_id === user.id;
+  const isCreator = targetPerson.created_by_user_id === user.id;
+
+  if (!isUserZero && !isClaimedOwner && (!isCreator || targetPerson.is_claimed)) {
+    return {
+      error: targetPerson.is_claimed
+        ? "Esta ficha ya fue reclamada por un familiar y solo su titular puede modificarla."
+        : "No tienes permisos para editar esta ficha familiar.",
+    };
+  }
+
+  // Ejecutar actualización
+  const { error: updateError } = await supabase
+    .from("persons")
+    .update({
+      first_name: firstName,
+      last_name: lastName,
+      maiden_name: maidenName,
+      gender,
+      birth_date: birthDate,
+      death_date: deathDate,
+      is_living: isLiving,
+      birth_place: birthPlace,
+      bio,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", personId);
+
+  if (updateError) {
+    return { error: `Error al actualizar la ficha: ${updateError.message}` };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return { success: true };
+}
+
+/**
+ * Server Action: Eliminar una ficha familiar (solo si aún no ha sido reclamada).
+ */
+export async function deleteFamilyMemberAction(personId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Debes estar autenticado para realizar esta acción." };
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  if (profile?.person_id === personId) {
+    return { error: "No puedes eliminar tu propia ficha genealógica principal." };
+  }
+
+  const { data: targetPerson, error: fetchError } = await supabase
+    .from("persons")
+    .select("id, is_claimed, created_by_user_id")
+    .eq("id", personId)
+    .single();
+
+  if (fetchError || !targetPerson) {
+    return { error: "No se encontró la ficha familiar a eliminar." };
+  }
+
+  if (targetPerson.is_claimed) {
+    return {
+      error: "No se puede eliminar una ficha que ya fue reclamada por un usuario registrado.",
+    };
+  }
+
+  const isUserZero = profile?.is_user_zero ?? false;
+  const isCreator = targetPerson.created_by_user_id === user.id;
+
+  if (!isUserZero && !isCreator) {
+    return { error: "No tienes permiso para eliminar esta ficha familiar." };
+  }
+
+  const { error: deleteError } = await supabase
+    .from("persons")
+    .delete()
+    .eq("id", personId);
+
+  if (deleteError) {
+    return { error: `Error al eliminar la ficha: ${deleteError.message}` };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return { success: true };
+}
+

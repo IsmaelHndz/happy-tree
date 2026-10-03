@@ -3,14 +3,13 @@
 import { useState } from "react";
 import type { FamilyMemberItem } from "../types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
+import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import {
   Users,
   ShieldCheck,
   Clock,
   KeyRound,
-  User,
-  Heart,
-  Sparkles,
+  Pencil,
 } from "lucide-react";
 
 interface FamilyDirectoryProps {
@@ -20,6 +19,7 @@ interface FamilyDirectoryProps {
 export function FamilyDirectory({ members }: FamilyDirectoryProps) {
   const [filter, setFilter] = useState<"all" | "parents" | "children" | "spouses" | "siblings">("all");
   const [activeInviteMember, setActiveInviteMember] = useState<FamilyMemberItem | null>(null);
+  const [activeEditMember, setActiveEditMember] = useState<FamilyMemberItem | null>(null);
 
   const filteredMembers = members.filter((m) => {
     if (filter === "parents") return m.relationshipCategory === "parent";
@@ -192,20 +192,40 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
                     {member.birthDate ? `Nac. ${member.birthDate}` : "Sin fecha"}
                   </span>
 
-                  {member.isLiving && !member.isClaimed && (
+                  <div className="flex items-center gap-1.5">
                     <button
-                      onClick={() => setActiveInviteMember(member)}
-                      className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 bg-neutral-800 hover:bg-emerald-600 hover:text-white text-neutral-200 rounded-lg transition"
+                      onClick={() => setActiveEditMember(member)}
+                      title="Editar ficha"
+                      className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 bg-neutral-800/80 hover:bg-neutral-700 hover:text-white text-neutral-300 rounded-lg transition"
                     >
-                      <KeyRound className="w-3.5 h-3.5" />
-                      <span>{member.invitationStatus === "pending" ? "Ver Enlace" : "Invitar"}</span>
+                      <Pencil className="w-3 h-3" />
+                      <span>Editar</span>
                     </button>
-                  )}
+
+                    {member.isLiving && !member.isClaimed && (
+                      <button
+                        onClick={() => setActiveInviteMember(member)}
+                        className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 bg-neutral-800 hover:bg-emerald-600 hover:text-white text-neutral-200 rounded-lg transition"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>{member.invitationStatus === "pending" ? "Ver Enlace" : "Invitar"}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
+      )}
+
+      {/* Modal de Edición Dinámico */}
+      {activeEditMember && (
+        <EditMemberModal
+          member={activeEditMember}
+          isOpen={Boolean(activeEditMember)}
+          onClose={() => setActiveEditMember(null)}
+        />
       )}
 
       {/* Modal de Invitación Dinámico */}

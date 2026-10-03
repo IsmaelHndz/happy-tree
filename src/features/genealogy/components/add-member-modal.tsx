@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { createFamilyMemberAction } from "@/features/genealogy/actions";
-import { UserPlus, X, Heart, Users, Mail, Calendar, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { UserPlus, X, Heart, Users, Mail, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import type { FamilyRelationshipType } from "../types";
 
 export function AddMemberModal() {
