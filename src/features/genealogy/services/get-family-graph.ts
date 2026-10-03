@@ -62,38 +62,15 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
 
   if (!centerPerson) return emptyResult;
 
-  // 3. Consultar la lista global de personas para el selector de perspectiva
-  const { data: allPersonsList } = await supabase
-    .from("persons")
-    .select("id, first_name, last_name, gender")
-    .order("first_name", { ascending: true });
-
-  const availableMembers =
-    allPersonsList?.map((p) => ({
-      id: p.id,
-      firstName: p.first_name,
-      lastName: p.last_name,
-      gender: p.gender as Gender,
-      relationshipLabel: p.id === userPersonId ? "Tú" : p.id === centerPersonId ? "Nodo Activo" : "Familiar",
-    })) ?? [];
-
-  // 4. Consultar todas las aristas verticales (padres e hijos)
+  // 3. Consultar todas las aristas verticales (padres e hijos)
   const { data: allParentEdges } = await supabase
     .from("parent_child_edges")
     .select("id, parent_id, child_id, relationship_type");
 
-  // 5. Consultar todas las uniones conyugales
+  // 4. Consultar todas las uniones conyugales
   const { data: allUnions } = await supabase
     .from("union_edges")
     .select("id, person_a_id, person_b_id, union_type, status");
-
-  // Personas creadas por el usuario autenticado
-  const { data: createdPersons } = await supabase
-    .from("persons")
-    .select("id")
-    .eq("created_by_user_id", user.id);
-
-  const createdIds = createdPersons?.map((p) => p.id) ?? [];
 
   // Helper para verificar si dos personas comparten hijos registrados
   const hasSharedChildren = (personA: string, personB: string): boolean => {
@@ -121,7 +98,7 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
 
   const treeVisibleUnions = allUnions?.filter(isUnionVisibleInTree) ?? [];
 
-  // 6. Identificar relaciones directas respecto al nodo central (centerPersonId)
+  // 5. Identificar relaciones directas respecto al nodo central (centerPersonId)
   const parentIds = allParentEdges?.filter((e) => e.child_id === centerPersonId).map((e) => e.parent_id) ?? [];
   const childIds = allParentEdges?.filter((e) => e.parent_id === centerPersonId).map((e) => e.child_id) ?? [];
 
@@ -159,7 +136,7 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
     siblingSpouseIds.push(...sSpouses);
   });
 
-  // Todos los IDs involucrados en el subgrafo enfocado
+  // Todos los IDs involucrados estrictamente en el subgrafo enfocado
   const nodeIds = Array.from(
     new Set([
       centerPersonId,
@@ -169,7 +146,6 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
       ...spouseIds,
       ...siblingIds,
       ...siblingSpouseIds,
-      ...createdIds,
     ])
   );
 
@@ -405,6 +381,22 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
       });
     });
   });
+
+  // Miembros para accesos rápidos en el explorador (círculo cercano del árbol activo)
+  const availableMembers = Array.from(
+    new Map(
+      positionedNodes.map((n) => [
+        n.id,
+        {
+          id: n.id,
+          firstName: n.firstName,
+          lastName: n.lastName,
+          gender: n.gender,
+          relationshipLabel: n.relationshipLabel || "Familiar",
+        },
+      ])
+    ).values()
+  );
 
   return {
     nodes: positionedNodes,

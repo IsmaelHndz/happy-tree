@@ -775,4 +775,101 @@ export async function getAvailableAnchors(): Promise<{ id: string; name: string 
   return persons?.map((p) => ({ id: p.id, name: `${p.first_name} ${p.last_name}` })) ?? [];
 }
 
+export interface SearchPersonResult {
+  id: string;
+  firstName: string;
+  lastName: string;
+  gender: Gender;
+  birthDate: string | null;
+  isClaimed: boolean;
+  matchType?: "id" | "name";
+}
+
+/**
+ * Server Action: Búsqueda escalable de personas por Nombre, Apellidos o ID exacto.
+ * Permite a cualquier usuario o administrador encontrar a alguien por su ID compartido o nombre.
+ */
+export async function searchPersonsAction(
+  rawQuery: string
+): Promise<{ results: SearchPersonResult[]; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { results: [], error: "Debes estar autenticado para buscar personas." };
+  }
+
+  const query = rawQuery.trim();
+  if (!query) {
+    return { results: [] };
+  }
+
+  // 1. Verificar si coincide con formato UUID (ej. al compartir o pegar el ID)
+  const isFullUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(query);
+
+  if (isFullUuid) {
+    const { data: personById, error: idError } = await supabase
+      .from("persons")
+      .select("id, first_name, last_name, gender, birth_date, is_claimed")
+      .eq("id", query)
+      .maybeSingle();
+
+    if (idError) {
+      return { results: [], error: idError.message };
+    }
+
+    if (personById) {
+      return {
+        results: [
+          {
+            id: personById.id,
+            firstName: personById.first_name,
+            lastName: personById.last_name,
+            gender: personById.gender as Gender,
+            birthDate: personById.birth_date,
+            isClaimed: personById.is_claimed,
+            matchType: "id",
+          },
+        ],
+      };
+    }
+  }
+
+  // 2. Búsqueda por texto en Nombre o Apellidos
+  const terms = query.split(/\s+/).filter(Boolean);
+  let queryBuilder = supabase
+    .from("persons")
+    .select("id, first_name, last_name, gender, birth_date, is_claimed")
+    .limit(10);
+
+  if (terms.length === 1) {
+    queryBuilder = queryBuilder.or(`first_name.ilike.%${terms[0]}%,last_name.ilike.%${terms[0]}%`);
+  } else {
+    queryBuilder = queryBuilder.or(
+      `and(first_name.ilike.%${terms[0]}%,last_name.ilike.%${terms[1]}%),first_name.ilike.%${query}%,last_name.ilike.%${query}%`
+    );
+  }
+
+  const { data: personsByName, error: nameError } = await queryBuilder;
+
+  if (nameError) {
+    return { results: [], error: nameError.message };
+  }
+
+  return {
+    results: (personsByName || []).map((p) => ({
+      id: p.id,
+      firstName: p.first_name,
+      lastName: p.last_name,
+      gender: p.gender as Gender,
+      birthDate: p.birth_date,
+      isClaimed: p.is_claimed,
+      matchType: "name",
+    })),
+  };
+}
+
+
 

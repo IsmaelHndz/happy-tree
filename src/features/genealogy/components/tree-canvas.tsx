@@ -5,6 +5,7 @@ import type { FamilyGraphData, TreeNodeData } from "../types/graph.types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
+import { TreeSearchModal } from "./tree-search-modal";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -20,6 +21,7 @@ import {
   UserPlus,
   Eye,
   EyeOff,
+  Search,
 } from "lucide-react";
 
 interface TreeCanvasProps {
@@ -37,8 +39,23 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   const [activeEditMember, setActiveEditMember] = useState<TreeNodeData | null>(null);
   const [activeAddAnchor, setActiveAddAnchor] = useState<TreeNodeData | null>(null);
 
+  // Modal de búsqueda / explorador de árboles (Cmd+K)
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
   // Toggle de control de complejidad: Ocultar parejas de hermanos por defecto
   const [hideSiblingSpouses, setHideSiblingSpouses] = useState(true);
+
+  // Atajo de teclado global Cmd+K / Ctrl+K
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -217,24 +234,19 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
             </Link>
           )}
 
-          {/* Selector de perspectiva directa */}
-          {graph.availableMembers && graph.availableMembers.length > 1 && (
-            <div className="flex items-center gap-1.5 text-xs">
-              <select
-                value={graph.focusPerson.id}
-                onChange={(e) => {
-                  router.push(`/tree?focus=${e.target.value}`);
-                }}
-                className="bg-neutral-950 border border-neutral-700/80 rounded-xl px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500 transition"
-              >
-                {graph.availableMembers.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    Ver árbol de: {m.firstName} {m.lastName} {m.id === graph.focusPerson.id ? "(Activo)" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* Botón de Explorador de Árboles y Búsqueda por Nombre o ID */}
+          <button
+            type="button"
+            onClick={() => setIsSearchOpen(true)}
+            title="Buscar familiar por nombre o ID exacto (Cmd+K)"
+            className="flex items-center gap-2 bg-neutral-950 hover:bg-neutral-800 border border-neutral-700/80 hover:border-emerald-500/60 rounded-xl px-3 py-1.5 text-xs text-neutral-200 transition shadow-sm group"
+          >
+            <Search className="w-3.5 h-3.5 text-neutral-400 group-hover:text-emerald-400 transition" />
+            <span>Explorar árbol...</span>
+            <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono bg-neutral-900 border border-neutral-700 rounded text-neutral-400">
+              ⌘K
+            </kbd>
+          </button>
         </div>
       </div>
 
@@ -679,6 +691,14 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           onClose={() => setActiveInviteMember(null)}
         />
       )}
+
+      {/* Modal de Búsqueda y Explorador de Árboles (Cmd+K) */}
+      <TreeSearchModal
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        currentPersonId={graph.focusPerson.id}
+        quickMembers={graph.availableMembers}
+      />
     </div>
   );
 }
