@@ -5,13 +5,29 @@ import { createFamilyMemberAction } from "@/features/genealogy/actions";
 import { UserPlus, X, Heart, Users, Mail, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import type { FamilyRelationshipType } from "../types";
 
-export function AddMemberModal() {
+export interface AddMemberModalProps {
+  defaultAnchorId?: string;
+  defaultAnchorName?: string;
+  availableAnchors?: { id: string; name: string }[];
+  triggerButton?: React.ReactNode;
+}
+
+export function AddMemberModal({
+  defaultAnchorId,
+  defaultAnchorName,
+  availableAnchors,
+  triggerButton,
+}: AddMemberModalProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [anchorId, setAnchorId] = useState(defaultAnchorId || "");
   const [isLiving, setIsLiving] = useState(true);
   const [relationship, setRelationship] = useState<FamilyRelationshipType>("father");
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successToken, setSuccessToken] = useState<string | null>(null);
+
+  const selectedAnchor = availableAnchors?.find((a) => a.id === (anchorId || defaultAnchorId));
+  const activeAnchorName = selectedAnchor?.name || defaultAnchorName || "ti";
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -22,6 +38,9 @@ export function AddMemberModal() {
     const formData = new FormData(form);
     formData.set("is_living", String(isLiving));
     formData.set("relationship", relationship);
+    if (anchorId || defaultAnchorId) {
+      formData.set("anchor_person_id", anchorId || defaultAnchorId || "");
+    }
 
     const result = await createFamilyMemberAction(formData);
 
@@ -49,17 +68,21 @@ export function AddMemberModal() {
 
   return (
     <>
-      <button
-        onClick={() => setIsOpen(true)}
-        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-xs shadow-md shadow-emerald-700/20 transition hover:scale-[1.02]"
-      >
-        <UserPlus className="w-4 h-4" />
-        <span>Agregar Familiar</span>
-      </button>
+      {triggerButton ? (
+        <div onClick={() => setIsOpen(true)}>{triggerButton}</div>
+      ) : (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-xs shadow-md shadow-emerald-700/20 transition hover:scale-[1.02]"
+        >
+          <UserPlus className="w-4 h-4" />
+          <span>Agregar Familiar</span>
+        </button>
+      )}
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl max-h-[90vh] overflow-y-auto">
             {/* Cerrar */}
             <button
               onClick={handleClose}
@@ -75,10 +98,10 @@ export function AddMemberModal() {
               </div>
               <div>
                 <h2 className="text-lg font-bold text-white">
-                  Registrar Familiar en tu Árbol
+                  Registrar Familiar en el Árbol
                 </h2>
                 <p className="text-xs text-neutral-400">
-                  Crea una ficha genealógica preliminar vinculada a tu perfil.
+                  Crea una ficha genealógica conectada a la red familiar.
                 </p>
               </div>
             </div>
@@ -98,38 +121,83 @@ export function AddMemberModal() {
                 </div>
                 <h3 className="font-bold text-base text-white">¡Familiar Registrado con Éxito!</h3>
                 <p className="text-xs text-neutral-400">
-                  Se generó un enlace criptográfico único para que tu familiar reclame su ficha:
+                  Se generó un token criptográfico único para que tu familiar reclame esta ficha personal.
                 </p>
-                <div className="p-2.5 bg-black/60 border border-neutral-800 rounded-xl text-xs font-mono text-neutral-300 break-all select-all">
-                  {inviteUrl}
+
+                <div className="p-3 bg-neutral-950 border border-neutral-800 rounded-xl text-left">
+                  <label className="block text-[11px] font-mono text-neutral-400 mb-1">
+                    Enlace de Reclamación Exclusivo
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={inviteUrl}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-mono select-all focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(inviteUrl)}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold whitespace-nowrap transition"
+                    >
+                      Copiar
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={handleClose}
-                  className="w-full py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-semibold transition"
-                >
-                  Finalizar
-                </button>
+
+                <div className="pt-2">
+                  <button
+                    onClick={handleClose}
+                    className="w-full py-2.5 px-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold transition"
+                  >
+                    Aceptar y Volver al Árbol
+                  </button>
+                </div>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-4 text-left">
-                {/* Parentesco */}
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Selector de Familiar de Referencia (Anchor) */}
+                {availableAnchors && availableAnchors.length > 0 && (
+                  <div className="p-3.5 bg-neutral-950/70 border border-neutral-800 rounded-2xl">
+                    <label className="block text-xs font-semibold text-neutral-200 mb-1 flex items-center justify-between">
+                      <span>Familiar de Referencia (Punto de anclaje)</span>
+                      <span className="text-[10px] text-emerald-400 font-mono">Modo Administrador</span>
+                    </label>
+                    <select
+                      value={anchorId || defaultAnchorId || availableAnchors[0]?.id}
+                      onChange={(e) => setAnchorId(e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-700/80 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-emerald-500 transition"
+                    >
+                      {availableAnchors.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} {a.id === defaultAnchorId ? "(Seleccionado)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-neutral-400 mt-1.5">
+                      El parentesco se registrará en relación a: <strong className="text-white">{activeAnchorName}</strong>
+                    </p>
+                  </div>
+                )}
+
+                {/* Parentesco respecto al anchor */}
                 <div>
                   <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                    Parentesco respecto a ti <span className="text-emerald-400">*</span>
+                    ¿Qué parentesco tiene con <span className="text-emerald-400 font-semibold">{activeAnchorName}</span>?
                   </label>
                   <select
                     value={relationship}
                     onChange={(e) => setRelationship(e.target.value as FamilyRelationshipType)}
                     className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition"
                   >
-                    <option value="father">Padre</option>
-                    <option value="mother">Madre</option>
-                    <option value="son">Hijo</option>
-                    <option value="daughter">Hija</option>
-                    <option value="spouse">Cónyuge / Esposo(a)</option>
-                    <option value="partner">Pareja</option>
-                    <option value="brother">Hermano</option>
-                    <option value="sister">Hermana</option>
+                    <option value="father">Padre de {activeAnchorName}</option>
+                    <option value="mother">Madre de {activeAnchorName}</option>
+                    <option value="son">Hijo de {activeAnchorName}</option>
+                    <option value="daughter">Hija de {activeAnchorName}</option>
+                    <option value="spouse">Cónyuge / Esposo(a) de {activeAnchorName}</option>
+                    <option value="partner">Pareja / Unión Libre de {activeAnchorName}</option>
+                    <option value="brother">Hermano de {activeAnchorName}</option>
+                    <option value="sister">Hermana de {activeAnchorName}</option>
                   </select>
                 </div>
 
@@ -178,8 +246,8 @@ export function AddMemberModal() {
                       }
                       className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition"
                     >
-                      <option value="male">Masculino</option>
-                      <option value="female">Femenino</option>
+                      <option value="male">Masculino (♂ Azul)</option>
+                      <option value="female">Femenino (♀ Rosa)</option>
                       <option value="other">Otro</option>
                       <option value="unknown">Desconocido</option>
                     </select>

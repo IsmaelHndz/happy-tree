@@ -4,15 +4,22 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { FamilyGraphData, TreeNodeData } from "../types/graph.types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
+import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ZoomIn,
   ZoomOut,
-  Maximize2,
   ShieldCheck,
   Clock,
   KeyRound,
   CheckCircle,
   Pencil,
+  Compass,
+  ArrowLeft,
+  UserPlus,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 interface TreeCanvasProps {
@@ -20,12 +27,18 @@ interface TreeCanvasProps {
 }
 
 export function TreeCanvas({ graph }: TreeCanvasProps) {
+  const router = useRouter();
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
   const [activeInviteMember, setActiveInviteMember] = useState<TreeNodeData | null>(null);
   const [activeEditMember, setActiveEditMember] = useState<TreeNodeData | null>(null);
+  const [activeAddAnchor, setActiveAddAnchor] = useState<TreeNodeData | null>(null);
+
+  // Toggle de control de complejidad: Ocultar parejas de hermanos por defecto
+  const [hideSiblingSpouses, setHideSiblingSpouses] = useState(true);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -38,14 +51,20 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       const rect = containerRef.current.getBoundingClientRect();
       setPosition({
         x: rect.width / 2,
-        y: rect.height / 3,
+        y: rect.height / 3.5,
       });
     }
   }, []);
 
   // Eventos de arrastre del lienzo (Pan)
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest(".tree-node-card") || (e.target as HTMLElement).closest(".tree-controls")) {
+    if (
+      (e.target as HTMLElement).closest(".tree-node-card") ||
+      (e.target as HTMLElement).closest(".tree-controls") ||
+      (e.target as HTMLElement).closest("button") ||
+      (e.target as HTMLElement).closest("select") ||
+      (e.target as HTMLElement).closest("a")
+    ) {
       return;
     }
     setIsDragging(true);
@@ -83,13 +102,56 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       setScale(1);
       setPosition({
         x: rect.width / 2,
-        y: rect.height / 3,
+        y: rect.height / 3.5,
       });
     }
   };
 
+  // Filtrado de nodos según el toggle de parejas de hermanos
+  const filteredNodes = graph.nodes.filter((node) => {
+    if (!hideSiblingSpouses) return true;
+    // Si es pareja de un hermano y no es la pareja de la persona central, ocultar para despejar
+    if (node.relationshipCategory === "spouse" && node.id !== graph.focusPerson.id) {
+      const isDirectSpouseOfFocus = graph.edges.some(
+        (e) =>
+          e.type === "union" &&
+          ((e.sourceId === graph.focusPerson.id && e.targetId === node.id) ||
+            (e.targetId === graph.focusPerson.id && e.sourceId === node.id))
+      );
+      if (!isDirectSpouseOfFocus) return false;
+    }
+    return true;
+  });
+
   const nodeMap = new Map<string, TreeNodeData>();
-  graph.nodes.forEach((n) => nodeMap.set(n.id, n));
+  filteredNodes.forEach((n) => nodeMap.set(n.id, n));
+
+  // =========================================================================
+  // AGRUPACIÓN PARA HORQUILLA GENEALÓGICA ENTRE HERMANOS (Pedigree Bus Bar)
+  // =========================================================================
+  const childToParentsMap = new Map<string, string[]>();
+  graph.edges
+    .filter((e) => e.type === "parent-child")
+    .forEach((e) => {
+      if (nodeMap.has(e.targetId) && nodeMap.has(e.sourceId)) {
+        const pList = childToParentsMap.get(e.targetId) || [];
+        if (!pList.includes(e.sourceId)) pList.push(e.sourceId);
+        childToParentsMap.set(e.targetId, pList);
+      }
+    });
+
+  const parentGroupToChildrenMap = new Map<string, string[]>();
+  childToParentsMap.forEach((parents, childId) => {
+    const parentKey = parents.sort().join("_");
+    const cList = parentGroupToChildrenMap.get(parentKey) || [];
+    if (!cList.includes(childId)) cList.push(childId);
+    parentGroupToChildrenMap.set(parentKey, cList);
+  });
+
+  const availableAnchors = graph.availableMembers.map((m) => ({
+    id: m.id,
+    name: `${m.firstName} ${m.lastName}`,
+  }));
 
   return (
     <div
@@ -99,7 +161,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onWheel={handleWheel}
-      className={`relative w-full h-[750px] bg-neutral-950/90 border border-neutral-800 rounded-3xl overflow-hidden select-none cursor-grab active:cursor-grabbing ${
+      className={`relative w-full h-[780px] bg-neutral-950/90 border border-neutral-800 rounded-3xl overflow-hidden select-none cursor-grab active:cursor-grabbing ${
         isDragging ? "cursor-grabbing" : ""
       }`}
     >
@@ -112,6 +174,69 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           backgroundPosition: `${position.x}px ${position.y}px`,
         }}
       />
+
+      {/* Barra Superior: Perspectiva Activa & Modo Administrador */}
+      <div className="tree-controls absolute top-4 left-4 right-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-neutral-900/90 border border-neutral-800 p-3 sm:px-5 sm:py-2.5 rounded-2xl shadow-xl backdrop-blur-md z-20">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
+            <Compass className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">Perspectiva:</span>
+              <span className="text-xs font-bold text-white">
+                {graph.focusPerson.firstName} {graph.focusPerson.lastName}
+              </span>
+              {graph.focusPerson.isSelf ? (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-800 text-emerald-300">
+                  Tú (Nodo Raíz)
+                </span>
+              ) : (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-800 text-cyan-300">
+                  Explorando Familiar
+                </span>
+              )}
+            </div>
+            {graph.isUserZero && (
+              <span className="text-[10px] text-neutral-500 block">
+                Modo Administrador: Puedes moverte entre árboles y editar las ramas de cualquiera
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+          {/* Volver a mi propio árbol si estamos en otra perspectiva */}
+          {!graph.focusPerson.isSelf && (
+            <Link
+              href="/tree"
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Volver a mi árbol</span>
+            </Link>
+          )}
+
+          {/* Selector de perspectiva directa */}
+          {graph.availableMembers && graph.availableMembers.length > 1 && (
+            <div className="flex items-center gap-1.5 text-xs">
+              <select
+                value={graph.focusPerson.id}
+                onChange={(e) => {
+                  router.push(`/tree?focus=${e.target.value}`);
+                }}
+                className="bg-neutral-950 border border-neutral-700/80 rounded-xl px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500 transition"
+              >
+                {graph.availableMembers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    Ver árbol de: {m.firstName} {m.lastName} {m.id === graph.focusPerson.id ? "(Activo)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Contenedor Transformable (Pan & Zoom) */}
       <div
@@ -131,45 +256,149 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
             </linearGradient>
           </defs>
 
-          {/* Renderizado de Aristas */}
-          {graph.edges.map((edge) => {
-            const source = nodeMap.get(edge.sourceId);
-            const target = nodeMap.get(edge.targetId);
+          {/* Renderizado de Horquillas Genealógicas (Padres -> Hermanos) */}
+          {Array.from(parentGroupToChildrenMap.entries()).map(([parentKey, childIds]) => {
+            const parents = parentKey
+              .split("_")
+              .map((pId) => nodeMap.get(pId))
+              .filter(Boolean) as TreeNodeData[];
+            const children = childIds
+              .map((cId) => nodeMap.get(cId))
+              .filter(Boolean) as TreeNodeData[];
 
-            if (!source || !target || source.x === undefined || target.x === undefined) {
-              return null;
+            if (parents.length === 0 || children.length === 0) return null;
+
+            // Punto de salida de los padres
+            let parentMidX = 0;
+            let parentMaxY = 0;
+            if (parents.length >= 2) {
+              parentMidX = (parents[0].x! + parents[1].x! + NODE_WIDTH) / 2;
+              parentMaxY = Math.max(parents[0].y!, parents[1].y!) + NODE_HEIGHT;
+            } else {
+              parentMidX = parents[0].x! + NODE_WIDTH / 2;
+              parentMaxY = parents[0].y! + NODE_HEIGHT;
             }
 
-            if (edge.type === "parent-child") {
-              // Curva Bézier vertical continua (evita el bug de bounding box 0 usando color sólido reactivo)
-              const x1 = source.x + NODE_WIDTH / 2;
-              const y1 = source.y! + NODE_HEIGHT;
-              const x2 = target.x + NODE_WIDTH / 2;
-              const y2 = target.y!;
-              const midY = (y1 + y2) / 2;
+            const firstChild = children[0];
+            const busY = parentMaxY + (firstChild.y! - parentMaxY) / 2;
 
+            if (children.length === 1) {
+              // Hijo único: conexión vertical directa
+              const childX = firstChild.x! + NODE_WIDTH / 2;
+              const childY = firstChild.y!;
               return (
                 <path
-                  key={edge.id}
-                  d={`M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`}
+                  key={`pc-single-${parentKey}`}
+                  d={`M ${parentMidX} ${parentMaxY} C ${parentMidX} ${busY}, ${childX} ${busY}, ${childX} ${childY}`}
                   fill="none"
                   stroke="#10b981"
-                  strokeOpacity="0.8"
+                  strokeOpacity="0.85"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                 />
               );
             }
 
-            if (edge.type === "union") {
-              // Línea horizontal entre cónyuges / co-padres
+            // Dos o más hijos (HERMANOS): Horquilla clásica con bus bar horizontal
+            const childXs = children.map((c) => c.x! + NODE_WIDTH / 2);
+            const minChildX = Math.min(...childXs);
+            const maxChildX = Math.max(...childXs);
+
+            return (
+              <g key={`pc-group-${parentKey}`}>
+                {/* Bajada vertical desde los padres hacia la barra de hermanos */}
+                <line
+                  x1={parentMidX}
+                  y1={parentMaxY}
+                  x2={parentMidX}
+                  y2={busY}
+                  stroke="#10b981"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                />
+                <circle cx={parentMidX} cy={busY} r="3" fill="#10b981" />
+
+                {/* Barra horizontal que agrupa y conecta a todos los hermanos */}
+                <line
+                  x1={minChildX}
+                  y1={busY}
+                  x2={maxChildX}
+                  y2={busY}
+                  stroke="#10b981"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                />
+
+                {/* Trazos verticales hacia cada hermano */}
+                {children.map((child) => {
+                  const cX = child.x! + NODE_WIDTH / 2;
+                  const cY = child.y!;
+                  return (
+                    <g key={`stub-${child.id}`}>
+                      <line
+                        x1={cX}
+                        y1={busY}
+                        x2={cX}
+                        y2={cY}
+                        stroke="#10b981"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                      />
+                      <circle cx={cX} cy={busY} r="2.5" fill="#10b981" />
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+
+          {/* Renderizado de Aristas de Unión Conyugal */}
+          {graph.edges
+            .filter((e) => e.type === "union")
+            .map((edge) => {
+              const source = nodeMap.get(edge.sourceId);
+              const target = nodeMap.get(edge.targetId);
+
+              if (!source || !target || source.x === undefined || target.x === undefined) {
+                return null;
+              }
+
               const isLeft = source.x < target.x;
               const x1 = isLeft ? source.x + NODE_WIDTH : source.x;
               const y1 = source.y! + NODE_HEIGHT / 2;
               const x2 = isLeft ? target.x : target.x + NODE_WIDTH;
               const y2 = target.y! + NODE_HEIGHT / 2;
-
               const midX = (x1 + x2) / 2;
+
+              const isSeparatedOrDivorced = edge.unionType === "divorced" || edge.unionType === "separated";
+
+              if (isSeparatedOrDivorced) {
+                // Vínculo conyugal disuelto o separado
+                return (
+                  <g key={edge.id}>
+                    <line
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
+                      stroke="#71717a"
+                      strokeWidth="2"
+                      strokeDasharray="4 4"
+                    />
+                    <circle cx={midX} cy={y1} r="9" fill="#18181b" stroke="#71717a" strokeWidth="1.5" />
+                    <text
+                      x={midX}
+                      y={y1 + 4}
+                      textAnchor="middle"
+                      fill="#ef4444"
+                      fontSize="12"
+                      fontWeight="bold"
+                    >
+                      ≠
+                    </text>
+                  </g>
+                );
+              }
 
               return (
                 <g key={edge.id}>
@@ -189,17 +418,14 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   />
                 </g>
               );
-            }
-
-            return null;
-          })}
+            })}
         </svg>
 
         {/* Capa de Nodos HTML */}
-        {graph.nodes.map((node) => {
+        {filteredNodes.map((node) => {
           if (node.x === undefined || node.y === undefined) return null;
 
-          const isSelf = node.relationshipCategory === "self";
+          const isCenter = node.id === graph.focusPerson.id;
           const isFemale = node.gender === "female";
           const isMale = node.gender === "male";
           const initials = `${node.firstName[0] || ""}${node.lastName[0] || ""}`.toUpperCase();
@@ -214,9 +440,9 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                 width: `${NODE_WIDTH}px`,
                 height: `${NODE_HEIGHT}px`,
               }}
-              className={`tree-node-card group p-3.5 rounded-2xl border transition-all shadow-xl backdrop-blur-md flex flex-col justify-between cursor-default ${
-                isSelf
-                  ? "bg-gradient-to-br from-emerald-950/80 to-neutral-900 border-emerald-500/70 shadow-emerald-950/40 ring-2 ring-emerald-500/20"
+              className={`tree-node-card group p-3 rounded-2xl border transition-all shadow-xl backdrop-blur-md flex flex-col justify-between cursor-default ${
+                isCenter
+                  ? "bg-gradient-to-br from-emerald-950/90 to-neutral-900 border-emerald-500/80 shadow-emerald-950/50 ring-2 ring-emerald-500/30"
                   : isFemale
                   ? "bg-neutral-900/90 border-neutral-800 hover:border-pink-500/50"
                   : isMale
@@ -225,11 +451,10 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
               }`}
             >
               {/* Encabezado del Nodo */}
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2.5 overflow-hidden">
-                  {/* Avatar con gradiente según género */}
+              <div className="flex items-start justify-between gap-1.5">
+                <div className="flex items-center gap-2 overflow-hidden">
                   <div
-                    className={`w-8 h-8 rounded-xl font-bold text-xs flex items-center justify-center shrink-0 border relative ${
+                    className={`w-7 h-7 rounded-xl font-bold text-xs flex items-center justify-center shrink-0 border relative ${
                       isFemale
                         ? "bg-gradient-to-tr from-pink-950 via-rose-900 to-pink-800 border-pink-500/50 text-pink-200"
                         : isMale
@@ -241,24 +466,17 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   </div>
 
                   <div className="overflow-hidden">
-                    <div className="flex items-center gap-1.5 truncate">
+                    <div className="flex items-center gap-1 truncate">
                       <h4 className="text-xs font-bold text-white truncate leading-tight">
                         {node.firstName} {node.lastName}
                       </h4>
-                      {/* Símbolo de Género */}
                       {isFemale && (
-                        <span
-                          title="Mujer"
-                          className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[10px] shrink-0"
-                        >
+                        <span className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[9px] shrink-0">
                           ♀
                         </span>
                       )}
                       {isMale && (
-                        <span
-                          title="Hombre"
-                          className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-400 font-bold text-[10px] shrink-0"
-                        >
+                        <span className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-blue-500/20 text-blue-400 font-bold text-[9px] shrink-0">
                           ♂
                         </span>
                       )}
@@ -274,9 +492,9 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                 </div>
 
                 <div className="flex items-center gap-1 shrink-0">
-                  {isSelf && (
+                  {isCenter && (
                     <span className="text-[9px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      Tú
+                      Centro
                     </span>
                   )}
                   <button
@@ -293,7 +511,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
               </div>
 
               {/* Estado y Quorum */}
-              <div className="my-auto pt-1">
+              <div className="my-auto pt-0.5">
                 {node.isClaimed ? (
                   <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-300 bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 rounded-full">
                     <ShieldCheck className="w-2.5 h-2.5 text-emerald-400" />
@@ -306,44 +524,84 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                 ) : node.invitationStatus === "pending" ? (
                   <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-300 bg-amber-950/60 border border-amber-800/40 px-2 py-0.5 rounded-full">
                     <Clock className="w-2.5 h-2.5 text-amber-400" />
-                    <span>Invitación enviada</span>
-                  </span>
-                ) : node.isReadyForInvite ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-teal-300 bg-teal-950/60 border border-teal-800/40 px-2 py-0.5 rounded-full">
-                    <CheckCircle className="w-2.5 h-2.5 text-teal-400" />
-                    <span>Quórum validado ({node.validationsCount}/{node.validationsNeeded})</span>
+                    <span>Invitado</span>
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-400 bg-amber-950/40 border border-amber-800/40 px-2 py-0.5 rounded-full">
-                    <Clock className="w-2.5 h-2.5" />
-                    <span>Esperando quórum ({node.validationsCount}/{node.validationsNeeded})</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-teal-300 bg-teal-950/60 border border-teal-800/40 px-2 py-0.5 rounded-full">
+                    <CheckCircle className="w-2.5 h-2.5 text-teal-400" />
+                    <span>Ficha Preliminar</span>
                   </span>
                 )}
               </div>
 
-              {/* Botón de Acción inferior */}
+              {/* Botones de Acción inferior */}
               <div className="pt-1.5 border-t border-neutral-800/60 flex items-center justify-between">
                 <span className="text-[10px] text-neutral-500 font-mono">
                   {node.birthDate ? node.birthDate.substring(0, 4) : "—"}
                 </span>
 
-                {node.isLiving && !node.isClaimed && (
+                <div className="flex items-center gap-1">
+                  {/* Si no es el centro, botón para centrar y explorar su propio árbol */}
+                  {!isCenter && (
+                    <button
+                      onClick={() => {
+                        router.push(`/tree?focus=${node.id}`);
+                      }}
+                      title="Explorar árbol desde este familiar"
+                      className="flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-300 hover:text-white transition border border-neutral-700/60"
+                    >
+                      <Compass className="w-2.5 h-2.5 text-emerald-400" />
+                      <span>Ver árbol</span>
+                    </button>
+                  )}
+
+                  {/* Botón para añadirle parientes directamente a este nodo */}
                   <button
-                    onClick={() => setActiveInviteMember(node)}
-                    className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 bg-neutral-800 hover:bg-emerald-600 hover:text-white text-neutral-300 rounded-md transition"
+                    onClick={() => setActiveAddAnchor(node)}
+                    title={`Añadir pariente a ${node.firstName}`}
+                    className="p-1 text-neutral-400 hover:text-emerald-400 hover:bg-neutral-800 rounded transition"
                   >
-                    <KeyRound className="w-2.5 h-2.5" />
-                    <span>{node.invitationStatus === "pending" ? "Ver Enlace" : "Invitar"}</span>
+                    <UserPlus className="w-3 h-3" />
                   </button>
-                )}
+
+                  {/* Invitar si está viva y sin reclamar */}
+                  {node.isLiving && !node.isClaimed && (
+                    <button
+                      onClick={() => setActiveInviteMember(node)}
+                      title="Generar invitación criptográfica"
+                      className="p-1 text-neutral-400 hover:text-teal-400 hover:bg-neutral-800 rounded transition"
+                    >
+                      <KeyRound className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           );
         })}
       </div>
 
-      {/* Controles Flotantes de Navegación (Zoom / Center) */}
+      {/* Controles Flotantes de Navegación y Visualización */}
       <div className="tree-controls absolute bottom-6 right-6 flex items-center gap-1 bg-neutral-900/90 border border-neutral-800 p-1.5 rounded-2xl shadow-xl backdrop-blur-md z-10">
+        {/* Toggle para ocultar parejas de hermanos */}
+        <button
+          onClick={() => setHideSiblingSpouses(!hideSiblingSpouses)}
+          title={
+            hideSiblingSpouses
+              ? "Mostrar parejas de hermanos/colaterales"
+              : "Ocultar parejas de hermanos (Modo Troncal)"
+          }
+          className={`p-2 rounded-xl transition ${
+            !hideSiblingSpouses
+              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+              : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+          }`}
+        >
+          {hideSiblingSpouses ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        </button>
+
+        <div className="w-[1px] h-5 bg-neutral-800 mx-1" />
+
         <button
           onClick={() => setScale((s) => Math.min(s * 1.2, 2.5))}
           title="Acercar (Zoom In)"
@@ -363,15 +621,12 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           title="Centrar Árbol"
           className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition"
         >
-          <Maximize2 className="w-4 h-4" />
+          <Compass className="w-4 h-4" />
         </button>
-        <div className="px-2 text-xs font-mono text-neutral-500 border-l border-neutral-800">
-          {Math.round(scale * 100)}%
-        </div>
       </div>
 
-      {/* Leyenda de Convenciones con Géneros */}
-      <div className="tree-controls absolute bottom-6 left-6 hidden md:flex items-center gap-4 bg-neutral-900/90 border border-neutral-800 px-4 py-2 rounded-2xl shadow-xl backdrop-blur-md text-[11px] text-neutral-400 z-10">
+      {/* Leyenda en pie de lienzo */}
+      <div className="tree-controls absolute bottom-6 left-6 hidden md:flex items-center gap-4 bg-neutral-900/80 border border-neutral-800 px-4 py-2 rounded-2xl text-xs text-neutral-400 backdrop-blur-sm z-10">
         <div className="flex items-center gap-1.5">
           <span className="w-3.5 h-3.5 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[10px] flex items-center justify-center">
             ♀
@@ -385,12 +640,12 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           <span>Hombre</span>
         </div>
         <div className="flex items-center gap-1.5 border-l border-neutral-800 pl-3">
-          <span className="w-2 h-2 rounded-full bg-emerald-400" />
-          <span>Reclamado</span>
+          <span className="w-2.5 h-1 bg-emerald-400 inline-block rounded" />
+          <span>Horquilla de Hermanos</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-amber-400" />
-          <span>En Quórum</span>
+          <span className="text-red-400 font-bold">≠</span>
+          <span>Separados / Divorciados</span>
         </div>
       </div>
 
@@ -400,6 +655,16 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           member={activeEditMember}
           isOpen={Boolean(activeEditMember)}
           onClose={() => setActiveEditMember(null)}
+        />
+      )}
+
+      {/* Modal de Añadir Pariente Contextual (Anclado al nodo seleccionado) */}
+      {activeAddAnchor && (
+        <AddMemberModal
+          defaultAnchorId={activeAddAnchor.id}
+          defaultAnchorName={`${activeAddAnchor.firstName} ${activeAddAnchor.lastName}`}
+          availableAnchors={availableAnchors}
+          triggerButton={<span />}
         />
       )}
 

@@ -1,48 +1,93 @@
 import { createClient } from "@/lib/supabase/server";
 import type { FamilyGraphData, TreeNodeData, TreeEdgeData } from "../types/graph.types";
+import type { Gender } from "@/types/database.types";
 
 /**
  * Consulta la base de datos y calcula la distribución espacial por generaciones del árbol familiar,
- * deduciendo automáticamente uniones conyugales entre co-padres que comparten hijos.
+ * centrándolo en focusPersonId (o en el usuario actual si no se especifica).
+ * Permite al Usuario Cero navegar y administrar libremente el árbol desde la perspectiva de cualquier familiar.
  */
-export async function getFamilyGraph(): Promise<FamilyGraphData> {
+export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGraphData> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) return { nodes: [], edges: [] };
+  const emptyResult: FamilyGraphData = {
+    nodes: [],
+    edges: [],
+    focusPerson: {
+      id: "",
+      firstName: "",
+      lastName: "",
+      gender: "unknown",
+      relationshipLabel: "",
+      isSelf: true,
+    },
+    availableMembers: [],
+    isUserZero: false,
+  };
 
-  // 1. Obtener la ficha del usuario actual
+  if (!user) return emptyResult;
+
+  // 1. Obtener la ficha y rol del usuario actual
   const { data: profile } = await supabase
     .from("profiles")
     .select("person_id, is_user_zero")
     .eq("id", user.id)
     .single();
 
-  if (!profile?.person_id) return { nodes: [], edges: [] };
-  const currentPersonId = profile.person_id;
+  if (!profile?.person_id) return emptyResult;
+  const userPersonId = profile.person_id;
+  const isUserZero = profile.is_user_zero;
 
-  // 2. Consultar ficha del usuario actual
-  const { data: selfPerson } = await supabase
+  // 2. Determinar el nodo central del árbol (Focus Person)
+  let centerPersonId = focusPersonId && focusPersonId.trim().length > 0 ? focusPersonId.trim() : userPersonId;
+
+  let { data: centerPerson } = await supabase
     .from("persons")
     .select("id, first_name, last_name, gender, birth_date, is_living, is_claimed")
-    .eq("id", currentPersonId)
-    .single();
+    .eq("id", centerPersonId)
+    .maybeSingle();
 
-  if (!selfPerson) return { nodes: [], edges: [] };
+  if (!centerPerson) {
+    centerPersonId = userPersonId;
+    const { data: fallbackPerson } = await supabase
+      .from("persons")
+      .select("id, first_name, last_name, gender, birth_date, is_living, is_claimed")
+      .eq("id", userPersonId)
+      .single();
+    centerPerson = fallbackPerson;
+  }
 
-  // 3. Consultar todas las aristas verticales (padres e hijos)
+  if (!centerPerson) return emptyResult;
+
+  // 3. Consultar la lista global de personas para el selector de perspectiva
+  const { data: allPersonsList } = await supabase
+    .from("persons")
+    .select("id, first_name, last_name, gender")
+    .order("first_name", { ascending: true });
+
+  const availableMembers =
+    allPersonsList?.map((p) => ({
+      id: p.id,
+      firstName: p.first_name,
+      lastName: p.last_name,
+      gender: p.gender as Gender,
+      relationshipLabel: p.id === userPersonId ? "Tú" : p.id === centerPersonId ? "Nodo Activo" : "Familiar",
+    })) ?? [];
+
+  // 4. Consultar todas las aristas verticales (padres e hijos)
   const { data: allParentEdges } = await supabase
     .from("parent_child_edges")
     .select("id, parent_id, child_id, relationship_type");
 
-  // 4. Consultar todas las uniones conyugales
+  // 5. Consultar todas las uniones conyugales
   const { data: allUnions } = await supabase
     .from("union_edges")
     .select("id, person_a_id, person_b_id, union_type");
 
-  // Personas creadas por el usuario
+  // Personas creadas por el usuario autenticado
   const { data: createdPersons } = await supabase
     .from("persons")
     .select("id")
@@ -50,67 +95,78 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
 
   const createdIds = createdPersons?.map((p) => p.id) ?? [];
 
-  // Identificar relaciones directas respecto al usuario actual
-  const parentIds = allParentEdges?.filter((e) => e.child_id === currentPersonId).map((e) => e.parent_id) ?? [];
-  const childIds = allParentEdges?.filter((e) => e.parent_id === currentPersonId).map((e) => e.child_id) ?? [];
-  
+  // 6. Identificar relaciones directas respecto al nodo central (centerPersonId)
+  const parentIds = allParentEdges?.filter((e) => e.child_id === centerPersonId).map((e) => e.parent_id) ?? [];
+  const childIds = allParentEdges?.filter((e) => e.parent_id === centerPersonId).map((e) => e.child_id) ?? [];
+
   const spouseIds = [
-    ...(allUnions?.filter((u) => u.person_a_id === currentPersonId).map((u) => u.person_b_id) ?? []),
-    ...(allUnions?.filter((u) => u.person_b_id === currentPersonId).map((u) => u.person_a_id) ?? []),
+    ...(allUnions?.filter((u) => u.person_a_id === centerPersonId).map((u) => u.person_b_id) ?? []),
+    ...(allUnions?.filter((u) => u.person_b_id === centerPersonId).map((u) => u.person_a_id) ?? []),
   ];
 
-  // Hermanos (hijos de mis padres que no sean yo)
+  // Hermanos (hijos de los padres del nodo central que no sean el nodo central)
   let siblingIds: string[] = [];
   if (parentIds.length > 0) {
     siblingIds = Array.from(
       new Set(
         allParentEdges
-          ?.filter((e) => parentIds.includes(e.parent_id) && e.child_id !== currentPersonId)
+          ?.filter((e) => parentIds.includes(e.parent_id) && e.child_id !== centerPersonId)
           .map((e) => e.child_id) ?? []
       )
     );
   }
 
-  // Abuelos (padres de mis padres)
+  // Abuelos (padres de los padres)
   const grandParentIds: string[] = [];
   if (parentIds.length > 0) {
     const gps = allParentEdges?.filter((e) => parentIds.includes(e.child_id)).map((e) => e.parent_id) ?? [];
     grandParentIds.push(...gps);
   }
 
-  // Todos los IDs involucrados en el subgrafo (incluyendo personas creadas por el usuario)
+  // Parejas de hermanos (para permitir visualizarlas u ocultarlas limpiamente)
+  const siblingSpouseIds: string[] = [];
+  siblingIds.forEach((sibId) => {
+    const sSpouses = [
+      ...(allUnions?.filter((u) => u.person_a_id === sibId).map((u) => u.person_b_id) ?? []),
+      ...(allUnions?.filter((u) => u.person_b_id === sibId).map((u) => u.person_a_id) ?? []),
+    ];
+    siblingSpouseIds.push(...sSpouses);
+  });
+
+  // Todos los IDs involucrados en el subgrafo enfocado
   const nodeIds = Array.from(
     new Set([
-      currentPersonId,
+      centerPersonId,
       ...parentIds,
       ...grandParentIds,
       ...childIds,
       ...spouseIds,
       ...siblingIds,
+      ...siblingSpouseIds,
       ...createdIds,
     ])
   );
 
-  // 5. Consultar los datos de todas las personas en el grafo
+  // 7. Consultar los datos de todas las personas en el grafo
   const { data: persons } = await supabase
     .from("persons")
     .select("id, first_name, last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
     .in("id", nodeIds);
 
-  if (!persons) return { nodes: [], edges: [] };
+  if (!persons) return emptyResult;
 
-  // 6. Consultar tokens de invitación activos
+  // 8. Consultar tokens de invitación activos
   const { data: tokens } = await supabase
     .from("invitation_tokens")
     .select("token, person_id, status, expires_at")
     .in("person_id", nodeIds);
 
-  // 7. Consultar endosos / validaciones acumuladas por persona
+  // 9. Consultar endosos / validaciones acumuladas por persona
   const { data: endorsements } = await supabase
     .from("endorsements")
     .select("endorsed_id");
 
-  // Cantidad total de usuarios reclamados en la red (para quorum adaptativo)
+  // Cantidad total de usuarios reclamados en la red
   const { count: activeUsersCount } = await supabase
     .from("persons")
     .select("id", { count: "exact", head: true })
@@ -118,15 +174,29 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
 
   const quorumThreshold = Math.min(3, Math.max(1, activeUsersCount ?? 1));
 
-  // 8. Construir la lista de nodos con su generación correspondiente
+  // 10. Construir la lista de nodos con su generación correspondiente
   const rawNodes: TreeNodeData[] = persons.map((p) => {
     let generation = 0;
     let relationshipLabel = "Familiar";
     let relationshipCategory: TreeNodeData["relationshipCategory"] = "sibling";
 
-    if (p.id === currentPersonId) {
+    const matchedUnion = allUnions?.find(
+      (u) =>
+        (u.person_a_id === centerPersonId && u.person_b_id === p.id) ||
+        (u.person_b_id === centerPersonId && u.person_a_id === p.id)
+    );
+
+    const unionInfo = matchedUnion
+      ? {
+          id: matchedUnion.id,
+          unionType: matchedUnion.union_type,
+          partnerId: centerPersonId,
+        }
+      : null;
+
+    if (p.id === centerPersonId) {
       generation = 0;
-      relationshipLabel = "Tú (Usuario Actual)";
+      relationshipLabel = centerPersonId === userPersonId ? "Tú" : "Persona Central (Foco)";
       relationshipCategory = "self";
     } else if (grandParentIds.includes(p.id)) {
       generation = -2;
@@ -142,12 +212,24 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
       relationshipCategory = "child";
     } else if (spouseIds.includes(p.id)) {
       generation = 0;
-      relationshipLabel = "Cónyuge / Pareja";
       relationshipCategory = "spouse";
+      if (matchedUnion?.union_type === "divorced") {
+        relationshipLabel = "Ex-pareja (Divorciados)";
+      } else if (matchedUnion?.union_type === "separated") {
+        relationshipLabel = "Ex-pareja (Separados)";
+      } else if (matchedUnion?.union_type === "partner" || matchedUnion?.union_type === "civil_union") {
+        relationshipLabel = "Pareja (Unión Libre)";
+      } else {
+        relationshipLabel = "Cónyuge / Pareja";
+      }
     } else if (siblingIds.includes(p.id)) {
       generation = 0;
       relationshipLabel = p.gender === "female" ? "Hermana" : "Hermano";
       relationshipCategory = "sibling";
+    } else if (siblingSpouseIds.includes(p.id)) {
+      generation = 0;
+      relationshipLabel = p.gender === "female" ? "Cuñada" : "Cuñado";
+      relationshipCategory = "spouse";
     } else {
       generation = 0;
       relationshipLabel = p.gender === "female" ? "Familiar (Femenino)" : "Familiar (Masculino)";
@@ -162,7 +244,7 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
       firstName: p.first_name,
       lastName: p.last_name,
       maidenName: p.maiden_name,
-      gender: p.gender,
+      gender: p.gender as Gender,
       birthDate: p.birth_date,
       deathDate: p.death_date,
       isLiving: p.is_living,
@@ -175,16 +257,17 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
       relationshipCategory,
       invitationStatus: token?.status ?? null,
       invitationToken: token?.token ?? null,
+      unionInfo,
       validationsCount: personValidations,
       validationsNeeded: quorumThreshold,
-      isReadyForInvite: personValidations >= quorumThreshold || profile.is_user_zero,
+      isReadyForInvite: personValidations >= quorumThreshold || isUserZero,
     };
   });
 
-  // 9. Filtrar y construir las aristas relevantes
+  // 11. Construir las aristas relevantes
   const edges: TreeEdgeData[] = [];
 
-  // 9.1 Aristas verticales registradas (padre -> hijo)
+  // 11.1 Aristas verticales registradas (padre -> hijo)
   allParentEdges?.forEach((e) => {
     if (nodeIds.includes(e.parent_id) && nodeIds.includes(e.child_id)) {
       edges.push({
@@ -196,7 +279,7 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
     }
   });
 
-  // 9.2 Aristas horizontales de unión registradas (parejas)
+  // 11.2 Aristas horizontales de unión registradas (parejas)
   allUnions?.forEach((u) => {
     if (nodeIds.includes(u.person_a_id) && nodeIds.includes(u.person_b_id)) {
       edges.push({
@@ -204,13 +287,12 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
         sourceId: u.person_a_id,
         targetId: u.person_b_id,
         type: "union",
+        unionType: u.union_type,
       });
     }
   });
 
-  // 9.3 DEDUCCIÓN AUTOMÁTICA DE UNIÓN ENTRE CO-PADRES:
-  // Si dos personas son progenitores del mismo hijo (ej. Juan y Ana con Lyndsay),
-  // y no tienen aún un registro en union_edges, deducimos su unión conyugal en el grafo.
+  // 11.3 Deducción de unión entre co-padres si comparten hijos y no tienen unión previa
   const childToParents = new Map<string, string[]>();
   allParentEdges?.forEach((e) => {
     const list = childToParents.get(e.child_id) || [];
@@ -237,6 +319,7 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
                 sourceId: pA,
                 targetId: pB,
                 type: "union",
+                unionType: "married",
               });
             }
           }
@@ -245,11 +328,11 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
     }
   });
 
-  // 10. Cálculo de Posiciones (Layout generacional en grilla centrada)
+  // 12. Cálculo de Posiciones (Layout generacional centrado)
   const NODE_WIDTH = 220;
   const NODE_HEIGHT = 130;
   const GAP_X = 50;
-  const GAP_Y = 140;
+  const GAP_Y = 150;
 
   const generations = [-2, -1, 0, 1];
   const positionedNodes: TreeNodeData[] = [];
@@ -259,13 +342,13 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
     const count = genNodes.length;
     if (count === 0) return;
 
-    // Ordenar generación 0 para que el usuario esté junto a su pareja
+    // Ordenar generación 0: [Persona central, Pareja, Hermanos...]
     if (gen === 0) {
       genNodes.sort((a, b) => {
         if (a.relationshipCategory === "self") return -1;
         if (b.relationshipCategory === "self") return 1;
-        if (a.relationshipCategory === "spouse") return -0.5;
-        if (b.relationshipCategory === "spouse") return 0.5;
+        if (a.relationshipCategory === "spouse" && spouseIds.includes(a.id)) return -0.5;
+        if (b.relationshipCategory === "spouse" && spouseIds.includes(b.id)) return 0.5;
         return 0;
       });
     }
@@ -287,5 +370,15 @@ export async function getFamilyGraph(): Promise<FamilyGraphData> {
   return {
     nodes: positionedNodes,
     edges,
+    focusPerson: {
+      id: centerPerson.id,
+      firstName: centerPerson.first_name,
+      lastName: centerPerson.last_name,
+      gender: centerPerson.gender as Gender,
+      relationshipLabel: centerPersonId === userPersonId ? "Tú" : "Familiar Seleccionado",
+      isSelf: centerPersonId === userPersonId,
+    },
+    availableMembers,
+    isUserZero,
   };
 }

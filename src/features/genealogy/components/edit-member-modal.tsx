@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { updateFamilyMemberAction, deleteFamilyMemberAction } from "@/features/genealogy/actions";
+import {
+  updateFamilyMemberAction,
+  deleteFamilyMemberAction,
+  updateUnionStatusAction,
+  dissolveUnionAction,
+} from "@/features/genealogy/actions";
 import {
   X,
   Pencil,
@@ -13,6 +18,8 @@ import {
   Trash2,
   CheckCircle2,
   ShieldCheck,
+  Heart,
+  HeartCrack,
 } from "lucide-react";
 import type { Gender } from "@/types/database.types";
 
@@ -29,6 +36,11 @@ export interface EditableMemberData {
   bio?: string | null;
   isClaimed: boolean;
   relationshipLabel?: string;
+  unionInfo?: {
+    id: string;
+    unionType: "married" | "civil_union" | "divorced" | "separated" | "partner";
+    partnerId: string;
+  } | null;
 }
 
 interface EditMemberModalProps {
@@ -47,6 +59,15 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
   const [deathDate, setDeathDate] = useState(member.deathDate || "");
   const [birthPlace, setBirthPlace] = useState(member.birthPlace || "");
   const [bio, setBio] = useState(member.bio || "");
+
+  // Estado conyugal si aplica
+  const [unionType, setUnionType] = useState<"married" | "civil_union" | "divorced" | "separated" | "partner">(
+    member.unionInfo?.unionType || "married"
+  );
+  const [isUpdatingUnion, setIsUpdatingUnion] = useState(false);
+  const [isDissolvingUnion, setIsDissolvingUnion] = useState(false);
+  const [confirmDissolve, setConfirmDissolve] = useState(false);
+  const [unionSuccessMessage, setUnionSuccessMessage] = useState<string | null>(null);
 
   const [isPending, setIsPending] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -86,6 +107,56 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
     }
   };
 
+  const handleUpdateUnionStatus = async () => {
+    if (!member.unionInfo) return;
+    setIsUpdatingUnion(true);
+    setError(null);
+    setUnionSuccessMessage(null);
+
+    const res = await updateUnionStatusAction({
+      personAId: member.id,
+      personBId: member.unionInfo.partnerId,
+      unionType,
+    });
+
+    setIsUpdatingUnion(false);
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setUnionSuccessMessage("Estado de pareja actualizado correctamente.");
+      setTimeout(() => setUnionSuccessMessage(null), 3000);
+    }
+  };
+
+  const handleDissolveUnion = async () => {
+    if (!member.unionInfo) return;
+    if (!confirmDissolve) {
+      setConfirmDissolve(true);
+      return;
+    }
+
+    setIsDissolvingUnion(true);
+    setError(null);
+    setUnionSuccessMessage(null);
+
+    const res = await dissolveUnionAction({
+      personAId: member.id,
+      personBId: member.unionInfo.partnerId,
+    });
+
+    setIsDissolvingUnion(false);
+    setConfirmDissolve(false);
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setUnionSuccessMessage(res.message || "Vínculo de pareja disuelto.");
+      setTimeout(() => {
+        onClose();
+      }, 900);
+    }
+  };
+
   const handleDelete = async () => {
     if (!confirmDelete) {
       setConfirmDelete(true);
@@ -112,7 +183,7 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
         {/* Botón Cerrar */}
         <button
           onClick={onClose}
-          disabled={isPending || isDeleting}
+          disabled={isPending || isDeleting || isUpdatingUnion || isDissolvingUnion}
           className="absolute top-5 right-5 text-neutral-400 hover:text-white p-1.5 rounded-xl hover:bg-neutral-800 transition"
         >
           <X className="w-4 h-4" />
@@ -156,7 +227,7 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
           </div>
         )}
 
-        {/* Mensaje de Éxito */}
+        {/* Mensaje de Éxito de Datos Personales */}
         {success && (
           <div className="mb-4 p-3 rounded-2xl bg-emerald-950/50 border border-emerald-500/50 text-emerald-200 text-xs flex items-center gap-2 animate-in fade-in">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -164,7 +235,97 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
           </div>
         )}
 
-        {/* Formulario */}
+        {/* Mensaje de Éxito de Unión */}
+        {unionSuccessMessage && (
+          <div className="mb-4 p-3 rounded-2xl bg-teal-950/50 border border-teal-500/50 text-teal-200 text-xs flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" />
+            <span>{unionSuccessMessage}</span>
+          </div>
+        )}
+
+        {/* SECCIÓN ESPECIAL: GESTIÓN DE VÍNCULO CONYUGAL (SI TIENE UNIÓN) */}
+        {member.unionInfo && (
+          <div className="mb-6 p-4 rounded-2xl bg-neutral-950/80 border border-pink-900/40 space-y-3">
+            <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-pink-300">
+                <Heart className="w-4 h-4 text-pink-400" />
+                <span>Gestión de Vínculo de Pareja</span>
+              </div>
+              <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-pink-950/60 border border-pink-800/50 text-pink-300">
+                {member.unionInfo.unionType}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
+              <div>
+                <label className="block text-[11px] font-medium text-neutral-300 mb-1">
+                  Estado de la Relación
+                </label>
+                <select
+                  value={unionType}
+                  onChange={(e) =>
+                    setUnionType(e.target.value as "married" | "civil_union" | "divorced" | "separated" | "partner")
+                  }
+                  className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-700 text-white text-xs focus:outline-none focus:border-pink-500 transition"
+                >
+                  <option value="married">Casados</option>
+                  <option value="partner">Pareja / Unión Libre</option>
+                  <option value="separated">Separados</option>
+                  <option value="divorced">Divorciados</option>
+                </select>
+              </div>
+
+              <button
+                type="button"
+                disabled={isUpdatingUnion || unionType === member.unionInfo.unionType}
+                onClick={handleUpdateUnionStatus}
+                className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold transition disabled:opacity-40 flex items-center justify-center gap-1.5"
+              >
+                {isUpdatingUnion && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Actualizar Estado</span>
+              </button>
+            </div>
+
+            {/* Disolver / Desvincular Pareja */}
+            <div className="pt-2 border-t border-neutral-900 flex items-center justify-between">
+              <span className="text-[11px] text-neutral-400">
+                ¿Ya no son pareja?
+              </span>
+
+              {confirmDissolve ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isDissolvingUnion}
+                    onClick={handleDissolveUnion}
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1"
+                  >
+                    {isDissolvingUnion ? <Loader2 className="w-3 h-3 animate-spin" /> : <HeartCrack className="w-3 h-3" />}
+                    <span>¿Confirmar fin de pareja?</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDissolve(false)}
+                    className="text-xs text-neutral-400 hover:text-white"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDissolve(true)}
+                  className="text-xs text-red-400 hover:text-red-300 hover:underline flex items-center gap-1 font-medium"
+                >
+                  <HeartCrack className="w-3.5 h-3.5" />
+                  <span>Disolver vínculo de pareja</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Formulario de Datos Personales */}
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Nombre y Apellidos */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

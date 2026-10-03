@@ -8,7 +8,11 @@ import { GitFork, Users, LogOut } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-export default async function TreePage() {
+interface TreePageProps {
+  searchParams: Promise<{ focus?: string }>;
+}
+
+export default async function TreePage({ searchParams }: TreePageProps) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -18,7 +22,13 @@ export default async function TreePage() {
     redirect("/login");
   }
 
-  const graph = await getFamilyGraph();
+  const { focus } = await searchParams;
+  const graph = await getFamilyGraph(focus);
+
+  const availableAnchors = graph.availableMembers.map((m) => ({
+    id: m.id,
+    name: `${m.firstName} ${m.lastName}`,
+  }));
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col justify-between p-4 sm:p-8 selection:bg-emerald-500 selection:text-black">
@@ -47,7 +57,11 @@ export default async function TreePage() {
             <span>Ver Directorio</span>
           </Link>
 
-          <AddMemberModal />
+          <AddMemberModal
+            defaultAnchorId={graph.focusPerson.id}
+            defaultAnchorName={`${graph.focusPerson.firstName} ${graph.focusPerson.lastName}`}
+            availableAnchors={availableAnchors}
+          />
 
           <form action="/auth/signout" method="POST">
             <button

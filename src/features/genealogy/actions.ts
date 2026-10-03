@@ -68,13 +68,15 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
   // 3. Consultar parejas / uniones
   const { data: unionsAsA } = await supabase
     .from("union_edges")
-    .select("person_b_id, union_type")
+    .select("id, person_a_id, person_b_id, union_type")
     .eq("person_a_id", currentPersonId);
 
   const { data: unionsAsB } = await supabase
     .from("union_edges")
-    .select("person_a_id, union_type")
+    .select("id, person_a_id, person_b_id, union_type")
     .eq("person_b_id", currentPersonId);
+
+  const allUserUnions = [...(unionsAsA ?? []), ...(unionsAsB ?? [])];
 
   const spouseIds = [
     ...(unionsAsA?.map((u) => u.person_b_id) ?? []),
@@ -117,6 +119,19 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
     let relationshipLabel = "Familiar";
     let relationshipCategory: FamilyMemberItem["relationshipCategory"] = "other";
 
+    const matchedUnion = allUserUnions.find(
+      (u) => (u.person_a_id === currentPersonId && u.person_b_id === p.id) ||
+             (u.person_b_id === currentPersonId && u.person_a_id === p.id)
+    );
+
+    const unionInfo = matchedUnion
+      ? {
+          id: matchedUnion.id,
+          unionType: matchedUnion.union_type,
+          partnerId: currentPersonId,
+        }
+      : null;
+
     if (parentIds.includes(p.id)) {
       relationshipLabel = p.gender === "female" ? "Madre" : p.gender === "male" ? "Padre" : "Progenitor";
       relationshipCategory = "parent";
@@ -124,8 +139,16 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
       relationshipLabel = p.gender === "female" ? "Hija" : p.gender === "male" ? "Hijo" : "Descendiente";
       relationshipCategory = "child";
     } else if (spouseIds.includes(p.id)) {
-      relationshipLabel = "Cónyuge / Pareja";
       relationshipCategory = "spouse";
+      if (matchedUnion?.union_type === "divorced") {
+        relationshipLabel = "Ex-pareja (Divorciados)";
+      } else if (matchedUnion?.union_type === "separated") {
+        relationshipLabel = "Ex-pareja (Separados)";
+      } else if (matchedUnion?.union_type === "partner" || matchedUnion?.union_type === "civil_union") {
+        relationshipLabel = "Pareja (Unión Libre)";
+      } else {
+        relationshipLabel = "Cónyuge / Pareja";
+      }
     } else if (siblingIds.includes(p.id)) {
       relationshipLabel = p.gender === "female" ? "Hermana" : p.gender === "male" ? "Hermano" : "Hermano/a";
       relationshipCategory = "sibling";
@@ -152,6 +175,7 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
       invitationToken: inviteToken?.token ?? null,
       invitationExpiresAt: inviteToken?.expires_at ?? null,
       invitedEmail: inviteToken?.invited_email ?? null,
+      unionInfo,
     };
   });
 }
@@ -169,10 +193,10 @@ export async function createFamilyMemberAction(formData: FormData) {
     return { error: "Debes estar autenticado para registrar familiares." };
   }
 
-  // Obtener person_id del usuario
+  // Obtener person_id del usuario y permisos
   const { data: profile } = await supabase
     .from("profiles")
-    .select("person_id")
+    .select("person_id, is_user_zero")
     .eq("id", user.id)
     .single();
 
@@ -180,7 +204,9 @@ export async function createFamilyMemberAction(formData: FormData) {
     return { error: "No tienes una ficha genealógica activa." };
   }
 
-  const currentPersonId = profile.person_id;
+  // Familiar de Referencia (Anchor): permite al Usuario Cero construir ramas para mamá, hermanos, etc.
+  const requestedAnchorId = (formData.get("anchor_person_id") as string)?.trim();
+  const currentPersonId = requestedAnchorId || profile.person_id;
 
   const firstName = (formData.get("first_name") as string)?.trim();
   const lastName = (formData.get("last_name") as string)?.trim();
@@ -521,4 +547,192 @@ export async function deleteFamilyMemberAction(personId: string) {
 
   return { success: true };
 }
+
+/**
+ * Server Action: Actualizar el estado conyugal de una pareja (Casados, Separados, Divorciados, etc.).
+ */
+export async function updateUnionStatusAction({
+  personAId,
+  personBId,
+  unionType,
+}: {
+  personAId: string;
+  personBId: string;
+  unionType: "married" | "civil_union" | "divorced" | "separated" | "partner";
+}) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Debes estar autenticado para modificar vínculos conyugales." };
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  const isUserZero = profile?.is_user_zero ?? false;
+  const isDirectParty = profile?.person_id === personAId || profile?.person_id === personBId;
+
+  if (!isUserZero && !isDirectParty) {
+    return { error: "No tienes permisos para modificar este vínculo conyugal." };
+  }
+
+  // Buscar el registro de la unión
+  const { data: unionRecord, error: fetchError } = await supabase
+    .from("union_edges")
+    .select("id")
+    .or(
+      `and(person_a_id.eq.${personAId},person_b_id.eq.${personBId}),and(person_a_id.eq.${personBId},person_b_id.eq.${personAId})`
+    )
+    .maybeSingle();
+
+  if (fetchError || !unionRecord) {
+    return { error: "No se encontró el vínculo conyugal entre estas dos personas." };
+  }
+
+  const { error: updateError } = await supabase
+    .from("union_edges")
+    .update({
+      union_type: unionType,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", unionRecord.id);
+
+  if (updateError) {
+    return { error: `Error actualizando estado conyugal: ${updateError.message}` };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return { success: true };
+}
+
+/**
+ * Server Action: Disolver o eliminar un vínculo de pareja.
+ * Si no tienen hijos en común, se elimina completamente la relación.
+ * Si tienen hijos en común, se actualiza a 'separated' o 'divorced' para preservar la filiación de los hijos.
+ */
+export async function dissolveUnionAction({
+  personAId,
+  personBId,
+  forceRemove = false,
+}: {
+  personAId: string;
+  personBId: string;
+  forceRemove?: boolean;
+}) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Debes estar autenticado para realizar esta acción." };
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  const isUserZero = profile?.is_user_zero ?? false;
+  const isDirectParty = profile?.person_id === personAId || profile?.person_id === personBId;
+
+  if (!isUserZero && !isDirectParty) {
+    return { error: "No tienes permisos para disolver este vínculo conyugal." };
+  }
+
+  // 1. Verificar si comparten hijos en común
+  const { data: childrenA } = await supabase
+    .from("parent_child_edges")
+    .select("child_id")
+    .eq("parent_id", personAId);
+
+  const { data: childrenB } = await supabase
+    .from("parent_child_edges")
+    .select("child_id")
+    .eq("parent_id", personBId);
+
+  const childIdsA = new Set(childrenA?.map((c) => c.child_id) ?? []);
+  const sharedChildren = (childrenB?.map((c) => c.child_id) ?? []).filter((id) => childIdsA.has(id));
+
+  // 2. Buscar el registro de la unión
+  const { data: unionRecord } = await supabase
+    .from("union_edges")
+    .select("id")
+    .or(
+      `and(person_a_id.eq.${personAId},person_b_id.eq.${personBId}),and(person_a_id.eq.${personBId},person_b_id.eq.${personAId})`
+    )
+    .maybeSingle();
+
+  if (!unionRecord) {
+    return { error: "No se encontró el vínculo de pareja a disolver." };
+  }
+
+  if (sharedChildren.length > 0 && !forceRemove) {
+    // Si tienen hijos y no se forzó el borrado, marcamos como separados para conservar la filiación de los hijos
+    await supabase
+      .from("union_edges")
+      .update({
+        union_type: "separated",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", unionRecord.id);
+
+    revalidatePath("/");
+    revalidatePath("/tree");
+
+    return {
+      success: true,
+      hasSharedChildren: true,
+      message: "Tienen hijos en común: la relación se actualizó a 'Separados' para preservar la filiación familiar.",
+    };
+  }
+
+  // Si no tienen hijos en común (o forceRemove = true), se elimina completamente el registro
+  const { error: deleteError } = await supabase
+    .from("union_edges")
+    .delete()
+    .eq("id", unionRecord.id);
+
+  if (deleteError) {
+    return { error: `Error disolviendo la pareja: ${deleteError.message}` };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return {
+    success: true,
+    hasSharedChildren: false,
+    message: "Vínculo de pareja disuelto y eliminado exitosamente.",
+  };
+}
+
+/**
+ * Consulta la lista de todas las personas registradas para usarlas como familiares de referencia (Anchors).
+ */
+export async function getAvailableAnchors(): Promise<{ id: string; name: string }[]> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return [];
+
+  const { data: persons } = await supabase
+    .from("persons")
+    .select("id, first_name, last_name")
+    .order("first_name", { ascending: true });
+
+  return persons?.map((p) => ({ id: p.id, name: `${p.first_name} ${p.last_name}` })) ?? [];
+}
+
 

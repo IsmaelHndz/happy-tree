@@ -35,6 +35,7 @@ export default async function Home() {
   } | null = null;
 
   let familyMembers: FamilyMemberItem[] = [];
+  let availableAnchors: { id: string; name: string }[] = [];
 
   if (user) {
     const { data: profile } = await supabase
@@ -61,6 +62,13 @@ export default async function Home() {
       };
 
       familyMembers = await getFamilyMembers();
+
+      availableAnchors = profile.person_id
+        ? [
+            { id: profile.person_id, name: `Tú (${personName})` },
+            ...familyMembers.map((m) => ({ id: m.id, name: `${m.firstName} ${m.lastName}` })),
+          ]
+        : [];
     }
   }
 
@@ -147,7 +155,7 @@ export default async function Home() {
                     <GitFork className="w-4 h-4 rotate-90" />
                     <span>Ver Árbol Visual</span>
                   </Link>
-                  <AddMemberModal />
+                  <AddMemberModal availableAnchors={availableAnchors} />
                 </div>
               </div>
 

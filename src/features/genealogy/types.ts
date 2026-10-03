@@ -29,6 +29,17 @@ export interface FamilyMemberItem {
   invitationToken?: string | null;
   invitationExpiresAt?: string | null;
   invitedEmail?: string | null;
+  unionInfo?: {
+    id: string;
+    unionType: "married" | "civil_union" | "divorced" | "separated" | "partner";
+    partnerId: string;
+  } | null;
+}
+
+export interface UpdateUnionInput {
+  personAId: string;
+  personBId: string;
+  unionType: "married" | "civil_union" | "divorced" | "separated" | "partner";
 }
 
 export interface UpdateFamilyMemberInput {
