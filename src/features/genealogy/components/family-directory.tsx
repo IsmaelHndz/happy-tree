@@ -223,6 +223,7 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
       {activeEditMember && (
         <EditMemberModal
           member={activeEditMember}
+          availableFamilyMembers={members.map((m) => ({ id: m.id, name: `${m.firstName} ${m.lastName}` }))}
           isOpen={Boolean(activeEditMember)}
           onClose={() => setActiveEditMember(null)}
         />

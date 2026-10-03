@@ -7,6 +7,8 @@ import {
   deleteFamilyMemberAction,
   updateUnionStatusAction,
   dissolveUnionAction,
+  resetPersonClaimAction,
+  updatePersonParentsAction,
 } from "@/features/genealogy/actions";
 import {
   X,
@@ -21,6 +23,11 @@ import {
   ShieldCheck,
   Heart,
   HeartCrack,
+  Mail,
+  RotateCcw,
+  Sparkles,
+  GitFork,
+  Plus,
 } from "lucide-react";
 import type { Gender } from "@/types/database.types";
 
@@ -37,6 +44,14 @@ export interface EditableMemberData {
   bio?: string | null;
   isClaimed: boolean;
   relationshipLabel?: string;
+  relationshipExplanation?: string;
+  accountEmail?: string | null;
+  parentConnections?: {
+    id: string;
+    parentId: string;
+    parentName: string;
+    relationshipType: string;
+  }[];
   unionInfo?: {
     id: string;
     unionType: "married" | "civil_union" | "divorced" | "separated" | "partner";
@@ -46,11 +61,12 @@ export interface EditableMemberData {
 
 interface EditMemberModalProps {
   member: EditableMemberData;
+  availableFamilyMembers?: { id: string; name: string }[];
   isOpen: boolean;
   onClose: () => void;
 }
 
-export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProps) {
+export function EditMemberModal({ member, availableFamilyMembers, isOpen, onClose }: EditMemberModalProps) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(member.firstName);
   const [lastName, setLastName] = useState(member.lastName);
@@ -70,6 +86,22 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
   const [isDissolvingUnion, setIsDissolvingUnion] = useState(false);
   const [confirmDissolve, setConfirmDissolve] = useState(false);
   const [unionSuccessMessage, setUnionSuccessMessage] = useState<string | null>(null);
+
+  // Estado para resetear / liberar ficha
+  const [isResettingClaim, setIsResettingClaim] = useState(false);
+  const [confirmResetClaim, setConfirmResetClaim] = useState(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
+
+  // Estado para corrección de progenitores (Padres)
+  const [parentIds, setParentIds] = useState<string[]>(
+    member.parentConnections?.map((p) => p.parentId) || []
+  );
+  const [relationshipType, setRelationshipType] = useState<"biological" | "adopted" | "foster" | "step">(
+    (member.parentConnections?.[0]?.relationshipType as "biological" | "adopted" | "foster" | "step") || "biological"
+  );
+  const [selectedNewParentId, setSelectedNewParentId] = useState<string>("");
+  const [isUpdatingParents, setIsUpdatingParents] = useState(false);
+  const [parentSuccessMessage, setParentSuccessMessage] = useState<string | null>(null);
 
   const [isPending, setIsPending] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -185,13 +217,68 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
     }
   };
 
+  const handleResetClaim = async () => {
+    setIsResettingClaim(true);
+    setError(null);
+    setResetSuccessMessage(null);
+
+    const res = await resetPersonClaimAction(member.id);
+    setIsResettingClaim(false);
+    setConfirmResetClaim(false);
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setResetSuccessMessage(res.message || "Ficha liberada exitosamente.");
+      router.refresh();
+      setTimeout(() => {
+        onClose();
+      }, 1500);
+    }
+  };
+
+  const handleAddParent = () => {
+    if (!selectedNewParentId || parentIds.includes(selectedNewParentId)) return;
+    if (parentIds.length >= 2) {
+      setError("Un familiar suele tener un máximo de 2 progenitores registrados en el árbol.");
+      return;
+    }
+    setParentIds([...parentIds, selectedNewParentId]);
+    setSelectedNewParentId("");
+  };
+
+  const handleRemoveParent = (idToRemove: string) => {
+    setParentIds(parentIds.filter((id) => id !== idToRemove));
+  };
+
+  const handleSaveParents = async () => {
+    setIsUpdatingParents(true);
+    setError(null);
+    setParentSuccessMessage(null);
+
+    const res = await updatePersonParentsAction({
+      personId: member.id,
+      parentIds,
+      relationshipType,
+    });
+
+    setIsUpdatingParents(false);
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setParentSuccessMessage("Filiación y progenitores actualizados.");
+      router.refresh();
+      setTimeout(() => setParentSuccessMessage(null), 3000);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
         {/* Botón Cerrar */}
         <button
           onClick={onClose}
-          disabled={isPending || isDeleting || isUpdatingUnion || isDissolvingUnion}
+          disabled={isPending || isDeleting || isUpdatingUnion || isDissolvingUnion || isResettingClaim || isUpdatingParents}
           className="absolute top-5 right-5 text-neutral-400 hover:text-white p-1.5 rounded-xl hover:bg-neutral-800 transition"
         >
           <X className="w-4 h-4" />
@@ -212,26 +299,221 @@ export function EditMemberModal({ member, isOpen, onClose }: EditMemberModalProp
               )}
             </div>
             <p className="text-xs text-neutral-400">
-              Modifica la información biográfica e histórica de este nodo familiar.
+              Modifica la información biográfica, histórica y filiación de este nodo familiar.
             </p>
           </div>
         </div>
 
-        {/* Estado Reclamado / Info */}
-        {member.isClaimed && (
-          <div className="mb-4 p-3 rounded-2xl bg-emerald-950/30 border border-emerald-800/40 text-emerald-200 text-xs flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+        {/* Inferencia de Parentesco Inteligente */}
+        {member.relationshipExplanation && (
+          <div className="mb-4 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
             <span>
-              Esta ficha está reclamada por una cuenta familiar activa.
+              Inferencia de parentesco: <strong>{member.relationshipExplanation}</strong>
             </span>
           </div>
         )}
+
+        {/* SECCIÓN ESPECIAL: CUENTA, CORREO REGISTRADO Y RESET (UNCLAIM) */}
+        {(member.accountEmail || member.isClaimed) && (
+          <div className="mb-4 p-4 rounded-2xl bg-neutral-950/70 border border-neutral-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Mail className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-semibold text-neutral-200">
+                  Cuenta y Correo Registrado
+                </span>
+              </div>
+              {member.isClaimed ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  <ShieldCheck className="w-3 h-3" /> Ficha Reclamada
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-800 text-neutral-400 border border-neutral-700">
+                  Pendiente
+                </span>
+              )}
+            </div>
+
+            {member.accountEmail && (
+              <div className="px-3.5 py-2.5 rounded-xl bg-neutral-900 border border-neutral-800 text-xs text-neutral-200 font-mono flex items-center justify-between">
+                <span>{member.accountEmail}</span>
+                <span className="text-[10px] text-neutral-400 font-sans">Correo utilizado</span>
+              </div>
+            )}
+
+            {/* Opción de Administrador: Liberar / Resetear Ficha */}
+            {member.isClaimed && (
+              <div className="pt-2 border-t border-neutral-800/80">
+                {confirmResetClaim ? (
+                  <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 space-y-2">
+                    <p className="text-xs text-amber-200 leading-relaxed">
+                      ¿Deseas liberar esta ficha? Se desvinculará el correo actual ({member.accountEmail ?? "cuenta vinculada"}). Sus datos genealógicos se mantendrán intactos, pero la persona podrá crear o vincular su cuenta con su correo correcto.
+                    </p>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={isResettingClaim}
+                        onClick={handleResetClaim}
+                        className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                      >
+                        {isResettingClaim ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        )}
+                        <span>Confirmar Liberación</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isResettingClaim}
+                        onClick={() => setConfirmResetClaim(false)}
+                        className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmResetClaim(true)}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 text-xs font-medium transition"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Liberar ficha para nuevo registro / Resetear correo</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SECCIÓN ESPECIAL: GESTIÓN DE PROGENITORES (PADRES / FILIACIÓN) */}
+        <div className="mb-6 p-4 rounded-2xl bg-neutral-950/70 border border-teal-900/40 space-y-3">
+          <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
+            <div className="flex items-center gap-2 text-xs font-bold text-teal-300">
+              <GitFork className="w-4 h-4 text-teal-400" />
+              <span>Progenitores / Filiación (Padres)</span>
+            </div>
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-teal-950/60 border border-teal-800/50 text-teal-300">
+              {parentIds.length}/2 registrados
+            </span>
+          </div>
+
+          {/* Lista de Progenitores Actuales */}
+          <div className="space-y-2">
+            {parentIds.length === 0 ? (
+              <p className="text-xs text-neutral-500 italic">No tiene progenitores asignados en el árbol.</p>
+            ) : (
+              parentIds.map((pId) => {
+                const parentObj = availableFamilyMembers?.find((m) => m.id === pId) ||
+                                  member.parentConnections?.find((c) => c.parentId === pId);
+                const pName = parentObj
+                  ? "name" in parentObj
+                    ? parentObj.name
+                    : parentObj.parentName
+                  : "Familiar registrado";
+                return (
+                  <div
+                    key={pId}
+                    className="flex items-center justify-between px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 text-xs"
+                  >
+                    <span className="text-white font-medium">{pName}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveParent(pId)}
+                      className="text-red-400 hover:text-red-300 p-1 hover:bg-red-950/30 rounded-lg transition"
+                      title="Quitar como progenitor"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Selector para añadir progenitor */}
+          {parentIds.length < 2 && availableFamilyMembers && (
+            <div className="flex items-center gap-2 pt-1">
+              <select
+                value={selectedNewParentId}
+                onChange={(e) => setSelectedNewParentId(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-200 text-xs focus:outline-none focus:border-teal-500"
+              >
+                <option value="">-- Seleccionar familiar como padre/madre --</option>
+                {availableFamilyMembers
+                  .filter((m) => m.id !== member.id && !parentIds.includes(m.id))
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+              </select>
+              <button
+                type="button"
+                disabled={!selectedNewParentId}
+                onClick={handleAddParent}
+                className="px-3 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-medium transition disabled:opacity-40 flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Añadir</span>
+              </button>
+            </div>
+          )}
+
+          {/* Tipo de relación y guardar */}
+          <div className="flex items-center justify-between pt-2 border-t border-neutral-800/80">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-neutral-400">Tipo de filiación:</span>
+              <select
+                value={relationshipType}
+                onChange={(e) =>
+                  setRelationshipType(e.target.value as "biological" | "adopted" | "foster" | "step")
+                }
+                className="px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-300 text-[11px]"
+              >
+                <option value="biological">Biológica</option>
+                <option value="adopted">Adoptiva</option>
+                <option value="step">Padrastro / Madrastra</option>
+                <option value="foster">Crianza / Acogida</option>
+              </select>
+            </div>
+
+            <button
+              type="button"
+              disabled={isUpdatingParents}
+              onClick={handleSaveParents}
+              className="px-3 py-1.5 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {isUpdatingParents && <Loader2 className="w-3 h-3 animate-spin" />}
+              <span>Guardar Filiación</span>
+            </button>
+          </div>
+        </div>
 
         {/* Alerta de Error */}
         {error && (
           <div className="mb-4 p-3 rounded-2xl bg-red-950/40 border border-red-800/60 text-red-200 text-xs flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {/* Mensaje de Éxito de Reset de Ficha */}
+        {resetSuccessMessage && (
+          <div className="mb-4 p-3 rounded-2xl bg-amber-950/50 border border-amber-500/50 text-amber-200 text-xs flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{resetSuccessMessage}</span>
+          </div>
+        )}
+
+        {/* Mensaje de Éxito de Progenitores */}
+        {parentSuccessMessage && (
+          <div className="mb-4 p-3 rounded-2xl bg-teal-950/50 border border-teal-500/50 text-teal-200 text-xs flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" />
+            <span>{parentSuccessMessage}</span>
           </div>
         )}
 

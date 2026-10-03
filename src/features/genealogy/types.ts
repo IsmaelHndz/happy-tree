@@ -24,11 +24,19 @@ export interface FamilyMemberItem {
   isClaimed: boolean;
   createdByUserId?: string | null;
   relationshipLabel: string;
-  relationshipCategory: "parent" | "child" | "spouse" | "sibling" | "other";
+  relationshipCategory: "parent" | "child" | "spouse" | "sibling" | "other" | "self";
+  relationshipExplanation?: string;
   invitationStatus?: InvitationStatus | null;
   invitationToken?: string | null;
   invitationExpiresAt?: string | null;
   invitedEmail?: string | null;
+  accountEmail?: string | null;
+  parentConnections?: {
+    id: string;
+    parentId: string;
+    parentName: string;
+    relationshipType: string;
+  }[];
   unionInfo?: {
     id: string;
     unionType: "married" | "civil_union" | "divorced" | "separated" | "partner";

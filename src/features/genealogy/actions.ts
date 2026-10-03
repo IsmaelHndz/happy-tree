@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { FamilyMemberItem, FamilyRelationshipType } from "./types";
 import type { Gender } from "@/types/database.types";
+import { inferKinship } from "./utils/kinship-inference";
 import crypto from "crypto";
 
 const RELATIONSHIP_LABELS: Record<FamilyRelationshipType, string> = {
@@ -39,30 +40,23 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
   const currentPersonId = profile.person_id;
 
   // 2. Consultar relaciones verticales (padres e hijos)
-  const { data: parentEdges } = await supabase
+  const { data: allParentEdges } = await supabase
     .from("parent_child_edges")
-    .select("parent_id, relationship_type")
-    .eq("child_id", currentPersonId);
+    .select("id, parent_id, child_id, relationship_type");
 
-  const parentIds = parentEdges?.map((e) => e.parent_id) ?? [];
-
-  const { data: childEdges } = await supabase
-    .from("parent_child_edges")
-    .select("child_id, relationship_type")
-    .eq("parent_id", currentPersonId);
-
-  const childIds = childEdges?.map((e) => e.child_id) ?? [];
+  const parentIds = allParentEdges?.filter((e) => e.child_id === currentPersonId).map((e) => e.parent_id) ?? [];
+  const childIds = allParentEdges?.filter((e) => e.parent_id === currentPersonId).map((e) => e.child_id) ?? [];
 
   // Hermanos: hijos de los mismos padres distintos al usuario
   let siblingIds: string[] = [];
   if (parentIds.length > 0) {
-    const { data: siblingEdges } = await supabase
-      .from("parent_child_edges")
-      .select("child_id")
-      .in("parent_id", parentIds)
-      .neq("child_id", currentPersonId);
-
-    siblingIds = Array.from(new Set(siblingEdges?.map((e) => e.child_id) ?? []));
+    siblingIds = Array.from(
+      new Set(
+        allParentEdges
+          ?.filter((e) => parentIds.includes(e.parent_id) && e.child_id !== currentPersonId)
+          .map((e) => e.child_id) ?? []
+      )
+    );
   }
 
   // 3. Consultar parejas / uniones
@@ -116,11 +110,20 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
     .in("person_id", allFamilyIds)
     .order("created_at", { ascending: false });
 
-  // Mapear resultado con etiqueta de parentesco relativa al usuario
-  return persons.map((p) => {
-    let relationshipLabel = "Familiar";
-    let relationshipCategory: FamilyMemberItem["relationshipCategory"] = "other";
+  const personsMap = new Map<string, { id: string; firstName: string; lastName: string; gender: Gender }>(
+    persons.map((p) => [
+      p.id,
+      {
+        id: p.id,
+        firstName: p.first_name,
+        lastName: p.last_name,
+        gender: p.gender as Gender,
+      },
+    ])
+  );
 
+  // Mapear resultado con inferencia inteligente de parentesco relativa al usuario
+  return persons.map((p) => {
     const matchedUnion = allUserUnions.find(
       (u) => (u.person_a_id === currentPersonId && u.person_b_id === p.id) ||
              (u.person_b_id === currentPersonId && u.person_a_id === p.id)
@@ -134,27 +137,25 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
         }
       : null;
 
-    if (parentIds.includes(p.id)) {
-      relationshipLabel = p.gender === "female" ? "Madre" : p.gender === "male" ? "Padre" : "Progenitor";
-      relationshipCategory = "parent";
-    } else if (childIds.includes(p.id)) {
-      relationshipLabel = p.gender === "female" ? "Hija" : p.gender === "male" ? "Hijo" : "Descendiente";
-      relationshipCategory = "child";
-    } else if (spouseIds.includes(p.id)) {
-      relationshipCategory = "spouse";
-      if (matchedUnion?.union_type === "divorced") {
-        relationshipLabel = "Ex-pareja (Divorciados)";
-      } else if (matchedUnion?.union_type === "separated") {
-        relationshipLabel = "Ex-pareja (Separados)";
-      } else if (matchedUnion?.union_type === "partner" || matchedUnion?.union_type === "civil_union") {
-        relationshipLabel = "Pareja (Unión Libre)";
-      } else {
-        relationshipLabel = "Cónyuge / Pareja";
-      }
-    } else if (siblingIds.includes(p.id)) {
-      relationshipLabel = p.gender === "female" ? "Hermana" : p.gender === "male" ? "Hermano" : "Hermano/a";
-      relationshipCategory = "sibling";
-    }
+    const kinship = inferKinship({
+      rootPersonId: currentPersonId,
+      targetPersonId: p.id,
+      targetGender: p.gender as Gender,
+      parentEdges: allParentEdges || [],
+      unions: allUserUnions,
+      personsMap,
+    });
+
+    const personParents = allParentEdges?.filter((e) => e.child_id === p.id) || [];
+    const parentConnections = personParents.map((e) => {
+      const parentObj = personsMap.get(e.parent_id);
+      return {
+        id: e.id,
+        parentId: e.parent_id,
+        parentName: parentObj ? `${parentObj.firstName} ${parentObj.lastName}` : "Progenitor",
+        relationshipType: e.relationship_type || "biological",
+      };
+    });
 
     const inviteToken = tokens?.find((t) => t.person_id === p.id);
 
@@ -171,12 +172,15 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
       bio: p.bio,
       isClaimed: p.is_claimed,
       createdByUserId: p.created_by_user_id,
-      relationshipLabel,
-      relationshipCategory,
+      relationshipLabel: kinship.relationshipLabel,
+      relationshipCategory: kinship.relationshipCategory,
+      relationshipExplanation: kinship.explanation,
       invitationStatus: inviteToken?.status ?? null,
       invitationToken: inviteToken?.token ?? null,
       invitationExpiresAt: inviteToken?.expires_at ?? null,
       invitedEmail: inviteToken?.invited_email ?? null,
+      accountEmail: inviteToken?.invited_email ?? null,
+      parentConnections,
       unionInfo,
     };
   });
@@ -869,6 +873,176 @@ export async function searchPersonsAction(
       matchType: "name",
     })),
   };
+}
+
+/**
+ * Server Action: Liberar / Resetear la vinculación de cuenta de una ficha genealógica (Unclaim).
+ * Permite a Usuario Cero o al creador desvincular un correo/cuenta erróneo para invitar a la persona correcta.
+ */
+export async function resetPersonClaimAction(personId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Debes estar autenticado para realizar esta acción." };
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  const isUserZero = profile?.is_user_zero ?? false;
+
+  // No permitir que el usuario desvincule su propia ficha
+  if (profile?.person_id === personId) {
+    return { error: "No puedes desvincular tu propia ficha de usuario principal." };
+  }
+
+  // 1. Intentar ejecutar función RPC atómica
+  const supabaseDynamic = supabase as unknown as {
+    rpc: (
+      fn: string,
+      args?: Record<string, unknown>
+    ) => Promise<{ data: unknown; error: unknown }>;
+  };
+  const { data: rpcData, error: rpcError } = await supabaseDynamic.rpc("reset_person_claim", {
+    p_person_id: personId,
+    p_admin_user_id: user.id,
+  });
+
+  if (!rpcError && rpcData) {
+    const res = rpcData as { success?: boolean; error?: string; message?: string };
+    if (res.error) {
+      return { error: res.error };
+    }
+    revalidatePath("/");
+    revalidatePath("/tree");
+    return { success: true, message: res.message || "Ficha liberada exitosamente." };
+  }
+
+  // 2. Fallback directo si la migración RPC aún no se ha ejecutado en Supabase remoto
+  const { data: targetPerson, error: fetchError } = await supabase
+    .from("persons")
+    .select("id, is_claimed, claimed_by_user_id, created_by_user_id")
+    .eq("id", personId)
+    .single();
+
+  if (fetchError || !targetPerson) {
+    return { error: "No se encontró la ficha familiar a liberar." };
+  }
+
+  if (!isUserZero && targetPerson.created_by_user_id !== user.id) {
+    return { error: "No tienes permisos para desvincular esta ficha." };
+  }
+
+  // Desvincular en persons
+  await supabase
+    .from("persons")
+    .update({
+      is_claimed: false,
+      claimed_by_user_id: null,
+      claimed_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", personId);
+
+  // Revocar tokens anteriores
+  await supabase
+    .from("invitation_tokens")
+    .update({
+      status: "revoked",
+    })
+    .eq("person_id", personId);
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return {
+    success: true,
+    message: "Ficha familiar liberada exitosamente. Ya puedes invitar a la persona con su correo real.",
+  };
+}
+
+/**
+ * Server Action: Actualizar o reasignar los progenitores de una persona (corrección de parentesco).
+ */
+export async function updatePersonParentsAction({
+  personId,
+  parentIds,
+  relationshipType = "biological",
+}: {
+  personId: string;
+  parentIds: string[];
+  relationshipType?: "biological" | "adopted" | "foster" | "step";
+}) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Debes estar autenticado para realizar esta acción." };
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  const isUserZero = profile?.is_user_zero ?? false;
+
+  // Consultar ficha
+  const { data: targetPerson } = await supabase
+    .from("persons")
+    .select("id, created_by_user_id")
+    .eq("id", personId)
+    .single();
+
+  if (!targetPerson) {
+    return { error: "No se encontró la persona." };
+  }
+
+  if (!isUserZero && targetPerson.created_by_user_id !== user.id && profile?.person_id !== personId) {
+    return { error: "No tienes permisos para modificar los parentescos de esta persona." };
+  }
+
+  // 1. Consultar filiaciones actuales
+  const { data: currentEdges } = await supabase
+    .from("parent_child_edges")
+    .select("id, parent_id")
+    .eq("child_id", personId);
+
+  const currentParentIds = currentEdges?.map((e) => e.parent_id) ?? [];
+
+  // 2. Eliminar progenitores que fueron quitados
+  const parentsToRemove = currentEdges?.filter((e) => !parentIds.includes(e.parent_id)) ?? [];
+  for (const edge of parentsToRemove) {
+    await supabase.from("parent_child_edges").delete().eq("id", edge.id);
+  }
+
+  // 3. Añadir o actualizar nuevos progenitores
+  const parentsToAdd = parentIds.filter((pId) => !currentParentIds.includes(pId));
+  for (const parentId of parentsToAdd) {
+    if (parentId && parentId !== personId) {
+      await supabase.from("parent_child_edges").insert({
+        parent_id: parentId,
+        child_id: personId,
+        relationship_type: relationshipType,
+        status: "confirmed",
+        created_by_user_id: user.id,
+      });
+    }
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return { success: true, message: "Parentescos actualizados exitosamente." };
 }
 
 

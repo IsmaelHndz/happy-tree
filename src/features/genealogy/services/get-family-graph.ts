@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import type { FamilyGraphData, TreeNodeData, TreeEdgeData } from "../types/graph.types";
 import type { Gender } from "@/types/database.types";
+import { inferKinship } from "../utils/kinship-inference";
 
 /**
  * Consulta la base de datos y calcula la distribución espacial por generaciones del árbol familiar,
@@ -160,8 +161,9 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
   // 8. Consultar tokens de invitación activos
   const { data: tokens } = await supabase
     .from("invitation_tokens")
-    .select("token, person_id, status, expires_at")
-    .in("person_id", nodeIds);
+    .select("token, person_id, status, expires_at, invited_email")
+    .in("person_id", nodeIds)
+    .order("created_at", { ascending: false });
 
   // 9. Consultar endosos / validaciones acumuladas por persona
   const { data: endorsements } = await supabase
@@ -176,11 +178,22 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
 
   const quorumThreshold = Math.min(3, Math.max(1, activeUsersCount ?? 1));
 
+  // Mapa de personas para inferencia genealógica inteligente
+  const personsMap = new Map<string, { id: string; firstName: string; lastName: string; gender: Gender }>(
+    persons.map((p) => [
+      p.id,
+      {
+        id: p.id,
+        firstName: p.first_name,
+        lastName: p.last_name,
+        gender: p.gender as Gender,
+      },
+    ])
+  );
+
   // 10. Construir la lista de nodos con su generación correspondiente
   const rawNodes: TreeNodeData[] = persons.map((p) => {
     let generation = 0;
-    let relationshipLabel = "Familiar";
-    let relationshipCategory: TreeNodeData["relationshipCategory"] = "sibling";
 
     // Buscar la unión conyugal de esta persona (con la persona central o su pareja respectiva)
     const matchedUnion = allUnions?.find(
@@ -204,21 +217,33 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
         }
       : null;
 
+    // Inferencia de parentesco con respecto a la persona central enfocada
+    const kinship = inferKinship({
+      rootPersonId: centerPersonId,
+      targetPersonId: p.id,
+      targetGender: p.gender as Gender,
+      parentEdges: allParentEdges ?? [],
+      unions: allUnions ?? [],
+      personsMap,
+    });
+
+    let relationshipLabel = kinship.relationshipLabel;
+    let relationshipCategory = kinship.relationshipCategory;
+    let relationshipExplanation = kinship.explanation;
+
     if (p.id === centerPersonId) {
       generation = 0;
       relationshipLabel = centerPersonId === userPersonId ? "Tú" : "Persona Central (Foco)";
       relationshipCategory = "self";
+      relationshipExplanation = "Foco principal del árbol";
     } else if (grandParentIds.includes(p.id)) {
       generation = -2;
-      relationshipLabel = p.gender === "female" ? "Abuela" : "Abuelo";
       relationshipCategory = "parent";
     } else if (parentIds.includes(p.id)) {
       generation = -1;
-      relationshipLabel = p.gender === "female" ? "Madre" : "Padre";
       relationshipCategory = "parent";
     } else if (childIds.includes(p.id)) {
       generation = 1;
-      relationshipLabel = p.gender === "female" ? "Hija" : "Hijo";
       relationshipCategory = "child";
     } else if (spouseIds.includes(p.id)) {
       generation = 0;
@@ -234,20 +259,30 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
       }
     } else if (siblingIds.includes(p.id)) {
       generation = 0;
-      relationshipLabel = p.gender === "female" ? "Hermana" : "Hermano";
       relationshipCategory = "sibling";
     } else if (siblingSpouseIds.includes(p.id)) {
       generation = 0;
       relationshipLabel = p.gender === "female" ? "Cuñada" : "Cuñado";
       relationshipCategory = "spouse";
+      relationshipExplanation = "Pareja de tu hermano/a";
     } else {
       generation = 0;
-      relationshipLabel = p.gender === "female" ? "Familiar (Femenino)" : "Familiar (Masculino)";
-      relationshipCategory = "sibling";
     }
 
     const token = tokens?.find((t) => t.person_id === p.id);
     const personValidations = endorsements?.filter((e) => e.endorsed_id === p.id).length ?? 0;
+
+    // Conexiones de progenitores directos
+    const personParents = allParentEdges?.filter((e) => e.child_id === p.id) ?? [];
+    const parentConnections = personParents.map((e) => {
+      const parentObj = personsMap.get(e.parent_id);
+      return {
+        id: e.id,
+        parentId: e.parent_id,
+        parentName: parentObj ? `${parentObj.firstName} ${parentObj.lastName}` : "Progenitor",
+        relationshipType: e.relationship_type || "biological",
+      };
+    });
 
     return {
       id: p.id,
@@ -265,6 +300,9 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
       generation,
       relationshipLabel,
       relationshipCategory,
+      relationshipExplanation,
+      accountEmail: token?.invited_email ?? null,
+      parentConnections,
       invitationStatus: token?.status ?? null,
       invitationToken: token?.token ?? null,
       unionInfo,

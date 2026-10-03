@@ -15,7 +15,15 @@ export interface TreeNodeData {
   createdByUserId?: string | null;
   generation: number; // -1: padres/ancestros, 0: usuario/pareja/hermanos, 1: hijos
   relationshipLabel: string;
-  relationshipCategory: "self" | "parent" | "child" | "spouse" | "sibling";
+  relationshipCategory: "self" | "parent" | "child" | "spouse" | "sibling" | "other";
+  relationshipExplanation?: string;
+  accountEmail?: string | null;
+  parentConnections?: {
+    id: string;
+    parentId: string;
+    parentName: string;
+    relationshipType: string;
+  }[];
   invitationStatus?: string | null;
   invitationToken?: string | null;
   unionInfo?: {

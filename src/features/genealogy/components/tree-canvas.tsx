@@ -22,6 +22,7 @@ import {
   Eye,
   EyeOff,
   Search,
+  Sparkles,
 } from "lucide-react";
 
 interface TreeCanvasProps {
@@ -493,13 +494,24 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                         </span>
                       )}
                     </div>
-                    <span
-                      className={`text-[10px] font-medium truncate block ${
-                        isFemale ? "text-pink-400" : isMale ? "text-blue-400" : "text-emerald-400"
-                      }`}
-                    >
-                      {node.relationshipLabel}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      <span
+                        className={`text-[10px] font-medium truncate block ${
+                          isFemale ? "text-pink-400" : isMale ? "text-blue-400" : "text-emerald-400"
+                        }`}
+                        title={node.relationshipExplanation || node.relationshipLabel}
+                      >
+                        {node.relationshipLabel}
+                      </span>
+                      {node.relationshipExplanation && !isCenter && (
+                        <span
+                          title={`Parentesco inferido: ${node.relationshipExplanation}`}
+                          className="cursor-help text-amber-400/80 hover:text-amber-300"
+                        >
+                          <Sparkles className="w-2.5 h-2.5" />
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -665,6 +677,10 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       {activeEditMember && (
         <EditMemberModal
           member={activeEditMember}
+          availableFamilyMembers={graph.nodes.map((n) => ({
+            id: n.id,
+            name: `${n.firstName} ${n.lastName}`,
+          }))}
           isOpen={Boolean(activeEditMember)}
           onClose={() => setActiveEditMember(null)}
         />
