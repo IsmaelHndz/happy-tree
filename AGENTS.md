@@ -28,6 +28,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
    - Maternal and paternal branches MUST NOT cross or interleave. The mother and father are the central axis of Generation -1.
 4. **SVG Orthogonal Bus Bars**: Sibling groups share a horizontal bus bar spanning `[min(child.x) + 110, max(child.x) + 110]`. Parents connect to this bar with a single vertical drop line. Spouses display a heart icon (`<3`) centered between their nodes.
 5. **Claimed Profile Protection**: When `persons.is_claimed = true`, only the owner (`claimed_by_user_id === user.id`) can edit their personal data or add relations directly to their personal anchor.
+6. **Parental Lineage Integrity & Explicit Unions**:
+   - Sibling registration must explicitly declare shared parentage (`'both' | 'maternal' | 'paternal'`). A sibling must ONLY be linked to the designated biological parent(s).
+   - Registering a second parent must NEVER automatically forge a marital union with existing parents; couple unions must be explicitly opt-in (`create_union === true`).
+   - Synthetic married unions between co-parents without database entries are strictly prohibited in `get-family-graph.ts`.
+7. **Descendant Generational Alignment (`gen > 0`)**:
+   - Descendant generations must NOT be centered across `x = 0`. Each sibling cluster must align directly underneath the horizontal midpoint of their parent unit in `gen - 1`: `targetCenterX = (P1.x + P2.x + NODE_WIDTH) / 2`.
+   - Multi-cluster rows must resolve spacing collisions using 1D least-squares block merging with `GAP_X = 50px`, maintaining parental vertical drop symmetry without overlapping.
 
 ---
 
@@ -134,6 +141,12 @@ Access control table for sharing trees with external friends.
   - `'intermediate'`: Home family + Grandparents, Uncles, Aunts, Cousins, Nephews/Nieces, Grandchildren.
   - `'advanced'`: Full genealogical graph without restrictions.
 - `status` (`'pending' | 'approved' | 'rejected'`).
+
+### 4.6. Dynamic Relationship Payloads (`childConnections` & `parentConnections`)
+To allow editing and reassigning roles without mutating database schemas:
+- `parentConnections`: `{ edgeId: string; parentId: string; parentName: string; relationshipType: string }[]`
+- `childConnections`: `{ edgeId: string; childId: string; childName: string; relationshipType: string }[]`
+Exposed on `FamilyMemberItem`, `EditableMemberData`, and `TreeNodeData`. Used by `EditMemberModal` to list and unlink individual children or convert roles.
 
 ---
 
@@ -277,8 +290,29 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
 ### Adding a new node relation
 1. Call `createFamilyMemberAction` in `src/features/genealogy/actions.ts`.
 2. Pass `anchor_person_id` and `relationship` (father, mother, child, spouse, sibling).
-3. The server action automatically creates the record in `persons` and the corresponding edge in `parent_child_edges` or `union_edges`.
-4. Call `revalidatePath('/tree')` and `revalidatePath('/')`.
+3. If `relationship === 'sibling'`, supply `sibling_type` (`'both' | 'maternal' | 'paternal'`).
+   - `'both'`: Links the new sibling to all biological parents of the anchor.
+   - `'maternal'`: Links the new sibling strictly to the anchor's mother (maternal half-sibling).
+   - `'paternal'`: Links the new sibling strictly to the anchor's father (paternal half-sibling).
+4. If adding a father/mother and the other parent already exists, pass `create_union: boolean` (defaults to `false`). Only create a union if explicitly checked by the user.
+5. The server action creates the record in `persons` and the corresponding edges in `parent_child_edges` or `union_edges`.
+6. Call `revalidatePath('/tree')` and `revalidatePath('/')`.
+
+### Unlinking an accidental child from a parent node
+1. Call `unlinkParentChildAction` in `src/features/genealogy/actions.ts`.
+2. Pass `parent_id` and `child_id`.
+3. The server action removes the specific row from `parent_child_edges` without deleting either person record.
+4. Used in `EditMemberModal` under the "Descendencia (Hijos Registrados)" section.
+
+### Role Conversion: Converting a misassigned parent into a sibling
+1. Call `convertParentToSiblingAction` in `src/features/genealogy/actions.ts`.
+2. Pass `misassigned_person_id` and `anchor_child_id` (the sibling who was mistakenly linked as their child).
+3. The server action:
+   - Identifies the anchor's actual parents.
+   - Dissolves any synthetic or erroneous `union_edges` between `misassigned_person_id` and the anchor's parents.
+   - Removes accidental `parent_child_edges` between `misassigned_person_id` and the anchor (and anchor's siblings).
+   - Links `misassigned_person_id` as a child to the anchor's parents with `relationship_type = 'biological'`.
+4. Used in `EditMemberModal` under "Asistente Genealógico: Reasignar Rol".
 
 ### Adding a new access tier for friend sharing
 1. Update `TreePermissionTier` union in `src/features/genealogy/types.ts`.
@@ -288,8 +322,6 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
 ### Verifying graph integrity locally
 Run tests with node pointing to the local package:
 ```bash
-node scratch/test_family_isolation.mjs
-node scratch/verify_sorting.mjs
 npm run build
 ```
 Ensure `next build` passes with 0 TypeScript errors.
