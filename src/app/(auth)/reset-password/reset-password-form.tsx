@@ -65,6 +65,24 @@ export function ResetPasswordForm() {
         }
       }
 
+      // 3. Si viene ?code= en los searchParams de la URL
+      if (typeof window !== "undefined" && window.location.search) {
+        const searchParams = new URLSearchParams(window.location.search);
+        const code = searchParams.get("code");
+        if (code) {
+          try {
+            const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+            if (!exchangeError) {
+              setSessionStatus("ready");
+              window.history.replaceState(null, "", window.location.pathname);
+              return;
+            }
+          } catch {
+            // Continuar
+          }
+        }
+      }
+
       // Si no hay sesión válida ni tokens recuperables
       setSessionStatus("invalid");
     }

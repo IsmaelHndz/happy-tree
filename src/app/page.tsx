@@ -31,11 +31,9 @@ export default async function Home({ searchParams }: HomeProps) {
   const supabase = await createClient();
 
   // Si Supabase redirige a la raíz con un código de autenticación o recuperación (?code=...)
+  // Redirigir al Route Handler /auth/callback que tiene permisos para escribir cookies en la respuesta
   if (params?.code) {
-    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(params.code);
-    if (!exchangeError) {
-      redirect("/reset-password");
-    }
+    redirect(`/auth/callback?code=${params.code}&next=/reset-password`);
   }
 
   const {

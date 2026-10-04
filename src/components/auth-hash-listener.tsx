@@ -20,6 +20,16 @@ export function AuthHashListener() {
       !window.location.pathname.startsWith("/reset-password")
     ) {
       window.location.href = `/reset-password${hash}`;
+      return;
+    }
+
+    const search = window.location.search;
+    if (
+      search &&
+      search.includes("code=") &&
+      window.location.pathname === "/"
+    ) {
+      window.location.href = `/auth/callback${search}&next=/reset-password`;
     }
   }, []);
 
