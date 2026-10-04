@@ -2,14 +2,17 @@
 
 import { useState } from "react";
 import type { FamilyMemberItem } from "../types";
+import { formatFullName } from "../types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
+import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import {
   Users,
   ShieldCheck,
   Clock,
   KeyRound,
   Pencil,
+  UserPlus,
 } from "lucide-react";
 
 interface FamilyDirectoryProps {
@@ -20,6 +23,7 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
   const [filter, setFilter] = useState<"all" | "parents" | "children" | "spouses" | "siblings">("all");
   const [activeInviteMember, setActiveInviteMember] = useState<FamilyMemberItem | null>(null);
   const [activeEditMember, setActiveEditMember] = useState<FamilyMemberItem | null>(null);
+  const [activeAddAnchor, setActiveAddAnchor] = useState<FamilyMemberItem | null>(null);
 
   const filteredMembers = members.filter((m) => {
     if (filter === "parents") return m.relationshipCategory === "parent";
@@ -132,7 +136,7 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
                       <div>
                         <div className="flex items-center gap-1.5">
                           <h4 className="text-sm font-bold text-white leading-tight">
-                            {member.firstName} {member.lastName}
+                            {formatFullName(member)}
                           </h4>
                           {isFemale && (
                             <span
@@ -193,6 +197,16 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
                   </span>
 
                   <div className="flex items-center gap-1.5">
+                    {/* Botón para agregar familiares anclados a esta persona */}
+                    <button
+                      onClick={() => setActiveAddAnchor(member)}
+                      title={`Añadir familiar respecto a ${member.firstName}`}
+                      className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 bg-emerald-950/60 hover:bg-emerald-600 hover:text-white text-emerald-300 border border-emerald-800/50 rounded-lg transition"
+                    >
+                      <UserPlus className="w-3 h-3" />
+                      <span>+ Pariente</span>
+                    </button>
+
                     <button
                       onClick={() => setActiveEditMember(member)}
                       title="Editar ficha"
@@ -219,11 +233,23 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
         </div>
       )}
 
+      {/* Modal de Añadir Pariente Anclado */}
+      {activeAddAnchor && (
+        <AddMemberModal
+          key={activeAddAnchor.id}
+          defaultAnchorId={activeAddAnchor.id}
+          defaultAnchorName={formatFullName(activeAddAnchor)}
+          availableAnchors={members.map((m) => ({ id: m.id, name: formatFullName(m) }))}
+          isOpen={Boolean(activeAddAnchor)}
+          onClose={() => setActiveAddAnchor(null)}
+        />
+      )}
+
       {/* Modal de Edición Dinámico */}
       {activeEditMember && (
         <EditMemberModal
           member={activeEditMember}
-          availableFamilyMembers={members.map((m) => ({ id: m.id, name: `${m.firstName} ${m.lastName}` }))}
+          availableFamilyMembers={members.map((m) => ({ id: m.id, name: formatFullName(m) }))}
           isOpen={Boolean(activeEditMember)}
           onClose={() => setActiveEditMember(null)}
         />
@@ -233,7 +259,7 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
       {activeInviteMember && (
         <InviteModal
           personId={activeInviteMember.id}
-          personName={`${activeInviteMember.firstName} ${activeInviteMember.lastName}`}
+          personName={formatFullName(activeInviteMember)}
           relationshipLabel={activeInviteMember.relationshipLabel}
           existingToken={activeInviteMember.invitationToken}
           existingEmail={activeInviteMember.invitedEmail}

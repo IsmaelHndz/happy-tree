@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { FamilyGraphData, TreeNodeData } from "../types/graph.types";
+import { formatFullName } from "../types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
@@ -168,7 +169,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
 
   const availableAnchors = graph.availableMembers.map((m) => ({
     id: m.id,
-    name: `${m.firstName} ${m.lastName}`,
+    name: formatFullName(m),
   }));
 
   return (
@@ -480,8 +481,11 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
 
                   <div className="overflow-hidden">
                     <div className="flex items-center gap-1 truncate">
-                      <h4 className="text-xs font-bold text-white truncate leading-tight">
-                        {node.firstName} {node.lastName}
+                      <h4
+                        className="text-xs font-bold text-white truncate leading-tight"
+                        title={formatFullName(node)}
+                      >
+                        {formatFullName(node)}
                       </h4>
                       {isFemale && (
                         <span className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[9px] shrink-0">
@@ -679,7 +683,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           member={activeEditMember}
           availableFamilyMembers={graph.nodes.map((n) => ({
             id: n.id,
-            name: `${n.firstName} ${n.lastName}`,
+            name: formatFullName(n),
           }))}
           isOpen={Boolean(activeEditMember)}
           onClose={() => setActiveEditMember(null)}
@@ -690,9 +694,10 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       {activeAddAnchor && (
         <AddMemberModal
           defaultAnchorId={activeAddAnchor.id}
-          defaultAnchorName={`${activeAddAnchor.firstName} ${activeAddAnchor.lastName}`}
+          defaultAnchorName={formatFullName(activeAddAnchor)}
           availableAnchors={availableAnchors}
-          triggerButton={<span />}
+          isOpen={Boolean(activeAddAnchor)}
+          onClose={() => setActiveAddAnchor(null)}
         />
       )}
 
@@ -700,7 +705,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       {activeInviteMember && (
         <InviteModal
           personId={activeInviteMember.id}
-          personName={`${activeInviteMember.firstName} ${activeInviteMember.lastName}`}
+          personName={formatFullName(activeInviteMember)}
           relationshipLabel={activeInviteMember.relationshipLabel}
           existingToken={activeInviteMember.invitationToken}
           isOpen={Boolean(activeInviteMember)}

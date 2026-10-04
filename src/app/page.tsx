@@ -4,7 +4,7 @@ import { checkUserZeroExists } from "@/features/auth/actions";
 import { getFamilyMembers } from "@/features/genealogy/actions";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { FamilyDirectory } from "@/features/genealogy/components/family-directory";
-import type { FamilyMemberItem } from "@/features/genealogy/types";
+import { formatFullName, type FamilyMemberItem } from "@/features/genealogy/types";
 import {
   GitFork,
   Shield,
@@ -40,13 +40,25 @@ export default async function Home() {
   if (user) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("id, is_user_zero, person_id, persons:person_id (first_name, last_name)")
+      .select("id, is_user_zero, person_id, persons:person_id (first_name, middle_name, last_name, maternal_last_name)")
       .eq("id", user.id)
       .maybeSingle();
 
     if (profile) {
-      const personData = profile.persons as unknown as { first_name: string; last_name: string } | null;
-      const personName = personData ? `${personData.first_name} ${personData.last_name}` : user.email || "Miembro";
+      const personData = profile.persons as unknown as {
+        first_name: string;
+        middle_name?: string | null;
+        last_name: string;
+        maternal_last_name?: string | null;
+      } | null;
+      const personName = personData
+        ? formatFullName({
+            firstName: personData.first_name,
+            middleName: personData.middle_name,
+            lastName: personData.last_name,
+            maternalLastName: personData.maternal_last_name,
+          })
+        : user.email || "Miembro";
 
       const { data: canInviteData } = await supabase.rpc("check_user_can_invite", {
         p_user_id: user.id,
@@ -66,7 +78,7 @@ export default async function Home() {
       availableAnchors = profile.person_id
         ? [
             { id: profile.person_id, name: `Tú (${personName})` },
-            ...familyMembers.map((m) => ({ id: m.id, name: `${m.firstName} ${m.lastName}` })),
+            ...familyMembers.map((m) => ({ id: m.id, name: formatFullName(m) })),
           ]
         : [];
     }

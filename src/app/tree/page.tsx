@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getFamilyGraph } from "@/features/genealogy/services/get-family-graph";
 import { TreeCanvas } from "@/features/genealogy/components/tree-canvas";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
+import { formatFullName } from "@/features/genealogy/types";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { GitFork, Users, LogOut } from "lucide-react";
@@ -27,7 +28,7 @@ export default async function TreePage({ searchParams }: TreePageProps) {
 
   const availableAnchors = graph.availableMembers.map((m) => ({
     id: m.id,
-    name: `${m.firstName} ${m.lastName}`,
+    name: formatFullName(m),
   }));
 
   return (
@@ -59,7 +60,7 @@ export default async function TreePage({ searchParams }: TreePageProps) {
 
           <AddMemberModal
             defaultAnchorId={graph.focusPerson.id}
-            defaultAnchorName={`${graph.focusPerson.firstName} ${graph.focusPerson.lastName}`}
+            defaultAnchorName={formatFullName(graph.focusPerson)}
             availableAnchors={availableAnchors}
           />
 

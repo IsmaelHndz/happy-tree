@@ -10,6 +10,8 @@ export interface AddMemberModalProps {
   defaultAnchorName?: string;
   availableAnchors?: { id: string; name: string }[];
   triggerButton?: React.ReactNode;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
 export function AddMemberModal({
@@ -17,9 +19,30 @@ export function AddMemberModal({
   defaultAnchorName,
   availableAnchors,
   triggerButton,
+  isOpen: externalIsOpen,
+  onClose: externalOnClose,
 }: AddMemberModalProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [anchorId, setAnchorId] = useState(defaultAnchorId || "");
+  const [internalIsOpen, setInternalIsOpen] = useState(false);
+  const isOpen = externalIsOpen !== undefined ? externalIsOpen : internalIsOpen;
+
+  const setIsOpen = (val: boolean) => {
+    setInternalIsOpen(val);
+    if (!val && externalOnClose) {
+      externalOnClose();
+    }
+  };
+
+  const [selectedAnchorId, setSelectedAnchorId] = useState<string | null>(null);
+  const [prevDefaultAnchorId, setPrevDefaultAnchorId] = useState(defaultAnchorId);
+
+  if (defaultAnchorId !== prevDefaultAnchorId) {
+    setPrevDefaultAnchorId(defaultAnchorId);
+    setSelectedAnchorId(null);
+  }
+
+  const anchorId = selectedAnchorId ?? (defaultAnchorId || "");
+  const setAnchorId = (val: string) => setSelectedAnchorId(val);
+
   const [isLiving, setIsLiving] = useState(true);
   const [relationship, setRelationship] = useState<FamilyRelationshipType>("father");
   const [isPending, setIsPending] = useState(false);
@@ -61,6 +84,9 @@ export function AddMemberModal({
     setIsOpen(false);
     setError(null);
     setSuccessToken(null);
+    if (externalOnClose) {
+      externalOnClose();
+    }
   };
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
@@ -201,31 +227,58 @@ export function AddMemberModal({
                   </select>
                 </div>
 
-                {/* Nombres y Apellidos */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                      Nombre(s) <span className="text-emerald-400">*</span>
-                    </label>
-                    <input
-                      name="first_name"
-                      type="text"
-                      required
-                      placeholder="Ej. Roberto"
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
-                    />
+                {/* Nombres y Apellidos Separados */}
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                        Primer Nombre <span className="text-emerald-400">*</span>
+                      </label>
+                      <input
+                        name="first_name"
+                        type="text"
+                        required
+                        placeholder="Ej. Jorge"
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                        Segundo Nombre <span className="text-neutral-500">(Opcional)</span>
+                      </label>
+                      <input
+                        name="middle_name"
+                        type="text"
+                        placeholder="Ej. Luis"
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                      Apellidos <span className="text-emerald-400">*</span>
-                    </label>
-                    <input
-                      name="last_name"
-                      type="text"
-                      required
-                      placeholder="Ej. Zapata"
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
-                    />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                        Apellido Paterno <span className="text-emerald-400">*</span>
+                      </label>
+                      <input
+                        name="last_name"
+                        type="text"
+                        required
+                        placeholder="Ej. Hernández"
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                        Apellido Materno <span className="text-neutral-500">(Opcional)</span>
+                      </label>
+                      <input
+                        name="maternal_last_name"
+                        type="text"
+                        placeholder="Ej. García"
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
+                      />
+                    </div>
                   </div>
                 </div>
 

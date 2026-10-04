@@ -34,7 +34,9 @@ import type { Gender } from "@/types/database.types";
 export interface EditableMemberData {
   id: string;
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   maidenName?: string | null;
   gender: Gender;
   birthDate?: string | null;
@@ -69,7 +71,9 @@ interface EditMemberModalProps {
 export function EditMemberModal({ member, availableFamilyMembers, isOpen, onClose }: EditMemberModalProps) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(member.firstName);
+  const [middleName, setMiddleName] = useState(member.middleName || "");
   const [lastName, setLastName] = useState(member.lastName);
+  const [maternalLastName, setMaternalLastName] = useState(member.maternalLastName || "");
   const [maidenName, setMaidenName] = useState(member.maidenName || "");
   const [gender, setGender] = useState<Gender>(member.gender);
   const [isLiving, setIsLiving] = useState(member.isLiving);
@@ -119,7 +123,9 @@ export function EditMemberModal({ member, availableFamilyMembers, isOpen, onClos
     const formData = new FormData();
     formData.set("person_id", member.id);
     formData.set("first_name", firstName);
+    formData.set("middle_name", middleName);
     formData.set("last_name", lastName);
+    formData.set("maternal_last_name", maternalLastName);
     formData.set("maiden_name", maidenName);
     formData.set("gender", gender);
     formData.set("is_living", String(isLiving));
@@ -646,34 +652,64 @@ export function EditMemberModal({ member, availableFamilyMembers, isOpen, onClos
 
         {/* Formulario de Datos Personales */}
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Nombre y Apellidos */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                Nombre(s) <span className="text-emerald-400">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                placeholder="Ej. Roberto"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-              />
+          {/* Nombres y Apellidos Separados */}
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                  Primer Nombre <span className="text-emerald-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  placeholder="Ej. Jorge"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                  Segundo Nombre <span className="text-neutral-500">(Opcional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={middleName}
+                  onChange={(e) => setMiddleName(e.target.value)}
+                  placeholder="Ej. Luis"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                Apellidos <span className="text-emerald-400">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                placeholder="Ej. Garza Flores"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                  Apellido Paterno <span className="text-emerald-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  placeholder="Ej. Hernández"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                  Apellido Materno <span className="text-neutral-500">(Opcional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={maternalLastName}
+                  onChange={(e) => setMaternalLastName(e.target.value)}
+                  placeholder="Ej. García"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+                />
+              </div>
             </div>
           </div>
 
