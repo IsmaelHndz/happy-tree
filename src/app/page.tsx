@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { checkUserZeroExists } from "@/features/auth/actions";
 import { getFamilyMembers } from "@/features/genealogy/actions";
@@ -20,7 +21,7 @@ import {
 export const dynamic = "force-dynamic";
 
 interface HomeProps {
-  searchParams?: Promise<{ unauthorized?: string; error?: string }>;
+  searchParams?: Promise<{ unauthorized?: string; error?: string; code?: string }>;
 }
 
 export default async function Home({ searchParams }: HomeProps) {
@@ -28,6 +29,15 @@ export default async function Home({ searchParams }: HomeProps) {
   const isUnauthorized = Boolean(params?.unauthorized || params?.error);
 
   const supabase = await createClient();
+
+  // Si Supabase redirige a la raíz con un código de autenticación o recuperación (?code=...)
+  if (params?.code) {
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(params.code);
+    if (!exchangeError) {
+      redirect("/reset-password");
+    }
+  }
+
   const {
     data: { user },
   } = await supabase.auth.getUser();
