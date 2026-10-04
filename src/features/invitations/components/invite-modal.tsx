@@ -48,15 +48,10 @@ export function InviteModal({
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) {
-      setError("Ingresa el correo del familiar para emitir la invitación.");
-      return;
-    }
-
     setIsPending(true);
     setError(null);
 
-    const result = await generateInvitationAction(personId, email, relationshipLabel);
+    const result = await generateInvitationAction(personId, email.trim() || null, relationshipLabel);
 
     setIsPending(false);
     if (result.error) {
@@ -122,20 +117,25 @@ export function InviteModal({
             </p>
 
             <div>
-              <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                Correo Electrónico de {personName}
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium text-neutral-300">
+                  Correo Electrónico de {personName}
+                </label>
+                <span className="text-[11px] text-emerald-400 font-medium">Opcional</span>
+              </div>
               <div className="relative">
                 <Mail className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
                 <input
                   type="email"
-                  required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="familiar@ejemplo.com"
+                  placeholder="familiar@ejemplo.com (o en blanco)"
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 pl-9 pr-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
                 />
               </div>
+              <p className="text-[11px] text-neutral-500 mt-1.5 leading-relaxed">
+                Si no conoces su correo o vas a mandarle el enlace por WhatsApp, déjalo vacío. Tu familiar podrá ingresar su propio correo directamente al reclamar su perfil.
+              </p>
             </div>
 
             <button

@@ -77,7 +77,7 @@ export default async function InvitePage({ params }: InvitePageProps) {
                 Ficha: {invite.firstName} {invite.lastName}
               </div>
               <div className="text-[11px] text-neutral-400 font-mono">
-                {invite.invitedEmail}
+                {invite.invitedEmail || "Sin correo preasignado (ingrésalo abajo)"}
               </div>
             </div>
           </div>
@@ -91,7 +91,7 @@ export default async function InvitePage({ params }: InvitePageProps) {
           token={invite.token!}
           defaultFirstName={invite.firstName || ""}
           defaultLastName={invite.lastName || ""}
-          invitedEmail={invite.invitedEmail!}
+          invitedEmail={invite.invitedEmail ?? null}
         />
 
         {/* Pie */}

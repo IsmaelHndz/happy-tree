@@ -210,7 +210,7 @@ export interface Database {
           token: string;
           person_id: string;
           invited_by_user_id: string;
-          invited_email: string;
+          invited_email: string | null;
           proposed_relationship: string | null;
           status: InvitationStatus;
           expires_at: string;
@@ -222,7 +222,7 @@ export interface Database {
           token: string;
           person_id: string;
           invited_by_user_id: string;
-          invited_email: string;
+          invited_email?: string | null;
           proposed_relationship?: string | null;
           status?: InvitationStatus;
           expires_at?: string;
@@ -234,7 +234,7 @@ export interface Database {
           token?: string;
           person_id?: string;
           invited_by_user_id?: string;
-          invited_email?: string;
+          invited_email?: string | null;
           proposed_relationship?: string | null;
           status?: InvitationStatus;
           expires_at?: string;

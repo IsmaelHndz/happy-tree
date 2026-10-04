@@ -9,7 +9,7 @@ interface ClaimFormProps {
   token: string;
   defaultFirstName: string;
   defaultLastName: string;
-  invitedEmail: string;
+  invitedEmail?: string | null;
 }
 
 const initialState: AuthActionState = {
@@ -36,21 +36,27 @@ export function ClaimForm({
         </div>
       )}
 
-      {/* Correo Electrónico (Read-only / informativo) */}
+      {/* Correo Electrónico para la Cuenta */}
       <div>
-        <label className="block text-xs font-medium text-neutral-400 mb-1.5">
-          Correo Electrónico Vinculado
+        <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+          Tu Correo Electrónico <span className="text-emerald-400">*</span>
         </label>
         <div className="relative">
           <Mail className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
           <input
+            name="email"
             type="email"
-            value={invitedEmail}
-            readOnly
-            disabled
-            className="w-full bg-neutral-950/50 border border-neutral-800/80 rounded-xl py-2.5 pl-9 pr-3 text-sm text-neutral-300 font-mono cursor-not-allowed"
+            required
+            defaultValue={invitedEmail || ""}
+            placeholder="tu-correo@ejemplo.com"
+            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 pl-9 pr-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
           />
         </div>
+        <p className="text-[11px] text-neutral-500 mt-1">
+          {invitedEmail
+            ? "Puedes confirmar este correo o cambiarlo por el que prefieras para tu cuenta personal."
+            : "Ingresa el correo con el que deseas iniciar sesión en Happy Tree."}
+        </p>
       </div>
 
       {/* Confirmación o corrección de nombres */}

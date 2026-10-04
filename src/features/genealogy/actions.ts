@@ -220,8 +220,8 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
       invitationStatus: inviteToken?.status ?? null,
       invitationToken: inviteToken?.token ?? null,
       invitationExpiresAt: inviteToken?.expires_at ?? null,
-      invitedEmail: inviteToken?.invited_email ?? null,
-      accountEmail: inviteToken?.invited_email ?? null,
+      invitedEmail: (inviteToken?.invited_email && inviteToken.invited_email.trim() !== "") ? inviteToken.invited_email.trim() : null,
+      accountEmail: (inviteToken?.invited_email && inviteToken.invited_email.trim() !== "") ? inviteToken.invited_email.trim() : null,
       parentConnections,
       unionInfo,
     };

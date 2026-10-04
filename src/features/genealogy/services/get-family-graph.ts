@@ -343,7 +343,7 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
       relationshipLabel,
       relationshipCategory,
       relationshipExplanation,
-      accountEmail: token?.invited_email ?? null,
+      accountEmail: (token?.invited_email && token.invited_email.trim() !== "") ? token.invited_email.trim() : null,
       parentConnections,
       invitationStatus: token?.status ?? null,
       invitationToken: token?.token ?? null,

@@ -6,11 +6,11 @@ import crypto from "crypto";
 
 export async function generateInvitationAction(
   personId: string,
-  email: string,
+  email?: string | null,
   proposedRelationship?: string
 ) {
-  if (!personId || !email) {
-    return { error: "El familiar y el correo son obligatorios." };
+  if (!personId) {
+    return { error: "El familiar es obligatorio." };
   }
 
   const supabase = await createClient();
@@ -74,17 +74,39 @@ export async function generateInvitationAction(
 
   // 4. Generar nuevo token criptográfico
   const rawToken = crypto.randomBytes(32).toString("hex");
-  const { data: newToken, error: insertError } = await supabase
+  const cleanEmail = email && email.trim().length > 0 ? email.trim().toLowerCase() : null;
+
+  let { data: newToken, error: insertError } = await supabase
     .from("invitation_tokens")
     .insert({
       token: rawToken,
       person_id: personId,
       invited_by_user_id: user.id,
-      invited_email: email.trim().toLowerCase(),
+      invited_email: cleanEmail,
       proposed_relationship: proposedRelationship || "Familiar",
     })
     .select("token")
     .single();
+
+  // Resiliencia si la columna en la BD remota todavía tiene restricción NOT NULL
+  if (insertError && !cleanEmail) {
+    const { data: fallbackToken, error: fallbackError } = await supabase
+      .from("invitation_tokens")
+      .insert({
+        token: rawToken,
+        person_id: personId,
+        invited_by_user_id: user.id,
+        invited_email: "",
+        proposed_relationship: proposedRelationship || "Familiar",
+      })
+      .select("token")
+      .single();
+
+    if (!fallbackError && fallbackToken) {
+      newToken = fallbackToken;
+      insertError = null;
+    }
+  }
 
   if (insertError || !newToken) {
     return { error: `Error creando invitación: ${insertError?.message}` };

@@ -192,7 +192,7 @@ export async function getInvitationDetails(token: string): Promise<InvitationDet
     personId: person.id,
     firstName: person.first_name,
     lastName: person.last_name,
-    invitedEmail: invite.invited_email,
+    invitedEmail: (invite.invited_email && invite.invited_email.trim() !== "") ? invite.invited_email.trim() : null,
     proposedRelationship: invite.proposed_relationship,
     inviterName,
   };
@@ -209,6 +209,7 @@ export async function claimProfileWithTokenAction(
   const password = formData.get("password") as string;
   const firstName = (formData.get("first_name") as string)?.trim();
   const lastName = (formData.get("last_name") as string)?.trim();
+  const formEmail = (formData.get("email") as string)?.trim().toLowerCase();
 
   if (!token) {
     return { error: "Token de invitación ausente." };
@@ -220,15 +221,22 @@ export async function claimProfileWithTokenAction(
 
   // 1. Revalidar invitación
   const invite = await getInvitationDetails(token);
-  if (!invite.isValid || !invite.invitedEmail) {
+  if (!invite.isValid) {
     return { error: invite.errorMessage || "Invitación inválida." };
+  }
+
+  // Obtener el correo a utilizar (del formulario o de la invitación)
+  const emailToUse = formEmail || (invite.invitedEmail ? invite.invitedEmail.trim().toLowerCase() : null);
+
+  if (!emailToUse || !emailToUse.includes("@")) {
+    return { error: "Debes ingresar un correo electrónico válido para registrar tu cuenta." };
   }
 
   const supabase = await createClient();
 
-  // 2. Registrar usuario en auth.users con el correo invitado
+  // 2. Registrar usuario en auth.users con el correo elegido
   const { data: authData, error: authError } = await supabase.auth.signUp({
-    email: invite.invitedEmail,
+    email: emailToUse,
     password,
     options: {
       data: {
@@ -252,6 +260,14 @@ export async function claimProfileWithTokenAction(
 
   if (rpcError) {
     return { error: `Error al reclamar el perfil: ${rpcError.message}` };
+  }
+
+  // 4. Si el token no tenía correo o se usó uno diferente, actualizar trazabilidad
+  if (!invite.invitedEmail || invite.invitedEmail.toLowerCase() !== emailToUse) {
+    await supabase
+      .from("invitation_tokens")
+      .update({ invited_email: emailToUse })
+      .eq("token", token);
   }
 
   revalidatePath("/", "layout");

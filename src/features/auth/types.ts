@@ -16,7 +16,7 @@ export interface InvitationDetails {
   personId?: string;
   firstName?: string;
   lastName?: string;
-  invitedEmail?: string;
+  invitedEmail?: string | null;
   proposedRelationship?: string | null;
   inviterName?: string | null;
 }
