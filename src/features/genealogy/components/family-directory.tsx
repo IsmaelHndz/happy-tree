@@ -237,14 +237,17 @@ export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectory
                       <span>Pariente</span>
                     </button>
 
-                    <button
-                      onClick={() => setActiveEditMember(member)}
-                      title="Editar ficha"
-                      className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-neutral-800/80 hover:bg-neutral-700 hover:text-white text-neutral-300 border border-neutral-700/60 rounded-lg transition whitespace-nowrap shrink-0"
-                    >
-                      <Pencil className="w-3.5 h-3.5 shrink-0" />
-                      <span>Editar</span>
-                    </button>
+                    {/* Solo se puede editar si la ficha NO ha sido reclamada (es decir, datos colaborativos pendientes) */}
+                    {!member.isClaimed && (
+                      <button
+                        onClick={() => setActiveEditMember(member)}
+                        title="Editar ficha"
+                        className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-neutral-800/80 hover:bg-neutral-700 hover:text-white text-neutral-300 border border-neutral-700/60 rounded-lg transition whitespace-nowrap shrink-0"
+                      >
+                        <Pencil className="w-3.5 h-3.5 shrink-0" />
+                        <span>Editar</span>
+                      </button>
+                    )}
 
                     {member.isLiving && !member.isClaimed && (
                       <button
@@ -300,6 +303,8 @@ export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectory
           viewerParents={members
             .filter((m) => m.relationshipCategory === "parent")
             .map((p) => ({ id: p.id, name: formatFullName(p) }))}
+          isUserZero={isUserZero}
+          isSelf={false}
           isOpen={Boolean(activeEditMember)}
           onClose={() => setActiveEditMember(null)}
         />

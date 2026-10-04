@@ -562,21 +562,23 @@ export async function updateFamilyMemberAction(formData: FormData) {
     return { error: "No se encontró la ficha genealógica especificada." };
   }
 
-  // Control de permisos:
-  // 1. Usuario Cero puede editar cualquier ficha.
-  // 2. Si la ficha está reclamada, solo el usuario titular puede modificar su propia información.
-  // 3. Si la ficha NO está reclamada, cualquier miembro reclamado de la red familiar o el creador puede editarla y completarla.
+  // Control de permisos estricto:
+  // 1. Si la ficha está reclamada, ÚNICAMENTE su titular puede modificar su información personal.
+  // 2. Si la ficha NO está reclamada, cualquier miembro activo de la red familiar o el creador puede editarla.
   const isUserZero = profile?.is_user_zero ?? false;
   const isClaimedOwner = targetPerson.is_claimed && targetPerson.claimed_by_user_id === user.id;
-  const isCreator = targetPerson.created_by_user_id === user.id;
   const isClaimedMember = Boolean(profile?.person_id);
   const isUnclaimed = !targetPerson.is_claimed;
 
-  if (!isUserZero && !isClaimedOwner && !isCreator && !(isUnclaimed && isClaimedMember)) {
+  if (targetPerson.is_claimed && !isClaimedOwner) {
     return {
-      error: targetPerson.is_claimed
-        ? "Esta ficha ya fue reclamada por un familiar y solo su titular puede modificarla."
-        : "No tienes permisos para editar esta ficha familiar.",
+      error: "Esta ficha pertenece a la cuenta personal de otro familiar y solo su titular puede modificarla.",
+    };
+  }
+
+  if (isUnclaimed && !isUserZero && !isClaimedMember && targetPerson.created_by_user_id !== user.id) {
+    return {
+      error: "No tienes permisos para editar esta ficha familiar.",
     };
   }
 
@@ -1033,9 +1035,20 @@ export async function resetPersonClaimAction(personId: string) {
 
   const isUserZero = profile?.is_user_zero ?? false;
 
-  // No permitir que el usuario desvincule su propia ficha
-  if (profile?.person_id === personId) {
-    return { error: "No puedes desvincular tu propia ficha de usuario principal." };
+  // Solo el Usuario Cero puede liberar fichas reclamadas
+  if (!isUserZero) {
+    return { error: "Solo el Administrador Familiar tiene permisos para liberar fichas reclamadas." };
+  }
+
+  // Verificar que la persona a liberar no sea el Administrador Fundador
+  const { data: targetProfile } = await supabase
+    .from("profiles")
+    .select("is_user_zero")
+    .eq("person_id", personId)
+    .maybeSingle();
+
+  if (targetProfile?.is_user_zero) {
+    return { error: "El perfil del Administrador Fundador no puede ser desvinculado ni reseteado." };
   }
 
   // 1. Intentar ejecutar función RPC atómica
@@ -1145,10 +1158,15 @@ export async function updatePersonParentsAction({
 
   const isClaimedMember = Boolean(profile?.person_id);
   const isSelf = profile?.person_id === personId;
-  const isCreator = targetPerson.created_by_user_id === user.id;
-  const isUnclaimed = !targetPerson.is_claimed;
 
-  if (!isUserZero && !isCreator && !isSelf && !(isUnclaimed && isClaimedMember)) {
+  // Si la persona objetivo ya reclamó su ficha:
+  // ÚNICAMENTE esa misma persona (isSelf) puede modificar sus propios progenitores.
+  if (targetPerson.is_claimed && !isSelf) {
+    return { error: "No puedes modificar los progenitores de un familiar que ya reclamó su cuenta personal." };
+  }
+
+  // Si la ficha no está reclamada, cualquier miembro activo o creador o Usuario Cero puede colaborar:
+  if (!targetPerson.is_claimed && !isUserZero && !isClaimedMember && targetPerson.created_by_user_id !== user.id) {
     return { error: "No tienes permisos para modificar los parentescos de esta persona." };
   }
 

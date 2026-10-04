@@ -546,16 +546,23 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                       Centro
                     </span>
                   )}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveEditMember(node);
-                    }}
-                    title="Editar ficha"
-                    className="p-1 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition"
-                  >
-                    <Pencil className="w-3 h-3" />
-                  </button>
+                  {/* Solo se puede editar si es su propia ficha personal (isSelf) O si es una ficha no reclamada */}
+                  {(() => {
+                    const isSelfNode = node.id === graph.focusPerson.id || node.relationshipCategory === "self";
+                    if (!isSelfNode && node.isClaimed) return null;
+                    return (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveEditMember(node);
+                        }}
+                        title={isSelfNode ? "Editar mi perfil" : "Editar ficha familiar"}
+                        className="p-1 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -714,6 +721,8 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
               .filter((n) => viewerParentIds.includes(n.id))
               .map((n) => ({ id: n.id, name: formatFullName(n) }));
           })()}
+          isUserZero={graph.isUserZero}
+          isSelf={activeEditMember?.id === graph.focusPerson.id}
           isOpen={Boolean(activeEditMember)}
           onClose={() => setActiveEditMember(null)}
         />

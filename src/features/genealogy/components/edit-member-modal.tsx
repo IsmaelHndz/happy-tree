@@ -65,6 +65,8 @@ interface EditMemberModalProps {
   member: EditableMemberData;
   availableFamilyMembers?: { id: string; name: string }[];
   viewerParents?: { id: string; name: string }[];
+  isUserZero?: boolean;
+  isSelf?: boolean;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -73,10 +75,13 @@ export function EditMemberModal({
   member,
   availableFamilyMembers,
   viewerParents,
+  isUserZero = false,
+  isSelf = false,
   isOpen,
   onClose,
 }: EditMemberModalProps) {
   const router = useRouter();
+  const isClaimedOther = Boolean(member.isClaimed && !isSelf);
   const [firstName, setFirstName] = useState(member.firstName);
   const [middleName, setMiddleName] = useState(member.middleName || "");
   const [lastName, setLastName] = useState(member.lastName);
@@ -375,8 +380,16 @@ export function EditMemberModal({
           </div>
         )}
 
+        {/* Banner de protección para fichas reclamadas por otro usuario */}
+        {isClaimedOther && (
+          <div className="mb-4 p-3.5 rounded-2xl bg-neutral-950/80 border border-neutral-800 flex items-center gap-2.5 text-xs text-neutral-300 animate-in fade-in">
+            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>Esta ficha personal está activa y verificada. Sus datos personales solo pueden ser modificados por su propio titular.</span>
+          </div>
+        )}
+
         {/* SECCIÓN ESPECIAL: CUENTA, CORREO REGISTRADO Y RESET (UNCLAIM) */}
-        {(member.accountEmail || member.isClaimed) && (
+        {isUserZero && (member.accountEmail || member.isClaimed) && !isSelf && (
           <div className="mb-4 p-4 rounded-2xl bg-neutral-950/70 border border-neutral-800 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -463,7 +476,7 @@ export function EditMemberModal({
           </div>
 
           {/* Asistente Rápido: Vincular como Hermano/a compartiendo progenitores */}
-          {viewerParents && viewerParents.length > 0 && (
+          {!isClaimedOther && viewerParents && viewerParents.length > 0 && (
             <div>
               {viewerParents.every((vp) => parentIds.includes(vp.id)) ? (
                 <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-800/50 flex items-center gap-2.5 text-xs text-emerald-200">
@@ -519,14 +532,16 @@ export function EditMemberModal({
                     className="flex items-center justify-between px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 text-xs"
                   >
                     <span className="text-white font-medium">{pName}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveParent(pId)}
-                      className="text-red-400 hover:text-red-300 p-1 hover:bg-red-950/30 rounded-lg transition"
-                      title="Quitar como progenitor"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+                    {!isClaimedOther && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveParent(pId)}
+                        className="text-red-400 hover:text-red-300 p-1 hover:bg-red-950/30 rounded-lg transition"
+                        title="Quitar como progenitor"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 );
               })
@@ -534,7 +549,7 @@ export function EditMemberModal({
           </div>
 
           {/* Selector para añadir progenitor */}
-          {parentIds.length < 2 && availableFamilyMembers && (
+          {!isClaimedOther && parentIds.length < 2 && availableFamilyMembers && (
             <div className="flex items-center gap-2 pt-1">
               <select
                 value={selectedNewParentId}
@@ -563,33 +578,35 @@ export function EditMemberModal({
           )}
 
           {/* Tipo de relación y guardar */}
-          <div className="flex items-center justify-between pt-2 border-t border-neutral-800/80">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-neutral-400">Tipo de filiación:</span>
-              <select
-                value={relationshipType}
-                onChange={(e) =>
-                  setRelationshipType(e.target.value as "biological" | "adopted" | "foster" | "step")
-                }
-                className="px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-300 text-[11px]"
-              >
-                <option value="biological">Biológica</option>
-                <option value="adopted">Adoptiva</option>
-                <option value="step">Padrastro / Madrastra</option>
-                <option value="foster">Crianza / Acogida</option>
-              </select>
-            </div>
+          {!isClaimedOther && (
+            <div className="flex items-center justify-between pt-2 border-t border-neutral-800/80">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-neutral-400">Tipo de filiación:</span>
+                <select
+                  value={relationshipType}
+                  onChange={(e) =>
+                    setRelationshipType(e.target.value as "biological" | "adopted" | "foster" | "step")
+                  }
+                  className="px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-300 text-[11px]"
+                >
+                  <option value="biological">Biológica</option>
+                  <option value="adopted">Adoptiva</option>
+                  <option value="step">Padrastro / Madrastra</option>
+                  <option value="foster">Crianza / Acogida</option>
+                </select>
+              </div>
 
-            <button
-              type="button"
-              disabled={isUpdatingParents}
-              onClick={handleSaveParents}
-              className="px-3 py-1.5 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {isUpdatingParents && <Loader2 className="w-3 h-3 animate-spin" />}
-              <span>Guardar Filiación</span>
-            </button>
-          </div>
+              <button
+                type="button"
+                disabled={isUpdatingParents}
+                onClick={handleSaveParents}
+                className="px-3 py-1.5 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isUpdatingParents && <Loader2 className="w-3 h-3 animate-spin" />}
+                <span>Guardar Filiación</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Alerta de Error */}
@@ -743,8 +760,62 @@ export function EditMemberModal({
           </div>
         )}
 
-        {/* Formulario de Datos Personales */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        {isClaimedOther ? (
+          <div className="p-4 rounded-2xl bg-neutral-950/70 border border-neutral-800 space-y-3">
+            <h3 className="text-xs font-semibold text-neutral-300 uppercase tracking-wider font-mono">
+              Ficha Biográfica Registrada
+            </h3>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <span className="text-neutral-500 block">Nombre Completo:</span>
+                <span className="text-white font-medium">
+                  {[member.firstName, member.middleName, member.lastName, member.maternalLastName]
+                    .filter(Boolean)
+                    .join(" ")}
+                </span>
+              </div>
+              <div>
+                <span className="text-neutral-500 block">Género:</span>
+                <span className="text-white font-medium">
+                  {member.gender === "male"
+                    ? "Masculino"
+                    : member.gender === "female"
+                    ? "Femenino"
+                    : "Otro"}
+                </span>
+              </div>
+              <div>
+                <span className="text-neutral-500 block">Estado:</span>
+                <span className="text-white font-medium">
+                  {member.isLiving ? "Con vida" : "Fallecido/a"}
+                </span>
+              </div>
+              {member.birthDate && (
+                <div>
+                  <span className="text-neutral-500 block">Fecha de Nacimiento:</span>
+                  <span className="text-white font-medium">{member.birthDate}</span>
+                </div>
+              )}
+            </div>
+            {member.bio && (
+              <div className="pt-2 border-t border-neutral-800/80 text-xs">
+                <span className="text-neutral-500 block">Biografía / Recuerdos:</span>
+                <p className="text-neutral-300 mt-1 italic">{member.bio}</p>
+              </div>
+            )}
+            <div className="pt-3 border-t border-neutral-800 flex justify-end">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-medium transition"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Formulario de Datos Personales */
+          <form onSubmit={handleSubmit} className="space-y-4">
           {/* Nombres y Apellidos Separados */}
           <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1017,7 +1088,8 @@ export function EditMemberModal({
             </div>
           </div>
         </form>
-      </div>
+      )}
     </div>
-  );
+  </div>
+);
 }
