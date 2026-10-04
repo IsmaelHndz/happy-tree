@@ -80,7 +80,8 @@ export function AddMemberModal({
   const [relation, setRelation] = useState<RelationChoice | null>(null);
   const [siblingType, setSiblingType] = useState<"both" | "maternal" | "paternal">("both");
   const [createUnion, setCreateUnion] = useState(false);
-  const [coParentChoice, setCoParentChoice] = useState<string | null>(null);
+  // "with:<id>" = hijo/a del ancla y <id> · "solo" = solo del ancla · "step:<id>" = solo de la pareja <id> (hijastro/a)
+  const [childOfChoice, setChildOfChoice] = useState<string | null>(null);
   const [partnerKind, setPartnerKind] = useState<"spouse" | "partner">("spouse");
   const [partnerGender, setPartnerGender] = useState<Gender>("unknown");
   const [isLiving, setIsLiving] = useState(true);
@@ -107,14 +108,14 @@ export function AddMemberModal({
   const mother = parents.find((p) => p.gender === "female");
   const father = parents.find((p) => p.gender === "male");
   const coParents = context?.coParents ?? [];
-  const coParentId = coParentChoice ?? context?.defaultCoParentId ?? "none";
+  const childOf = childOfChoice ?? (context?.defaultCoParentId ? `with:${context.defaultCoParentId}` : "solo");
 
   const resetForm = () => {
     setSelectedAnchorId(null);
     setRelation(null);
     setSiblingType("both");
     setCreateUnion(false);
-    setCoParentChoice(null);
+    setChildOfChoice(null);
     setPartnerKind("spouse");
     setPartnerGender("unknown");
     setIsLiving(true);
@@ -144,9 +145,18 @@ export function AddMemberModal({
     formData.set("gender", option.gender ?? partnerGender);
     formData.set("is_living", String(isLiving));
     if (anchorId) formData.set("anchor_person_id", anchorId);
+    if (relation === "son" || relation === "daughter") {
+      const [mode, otherId] = childOf.split(":");
+      if (mode === "step") {
+        // Hijo/a solo de la pareja: se registra respecto a ella, sin vincularlo al ancla
+        formData.set("anchor_person_id", otherId);
+        formData.set("co_parent_id", "none");
+      } else {
+        formData.set("co_parent_id", mode === "with" ? otherId : "none");
+      }
+    }
     if (relation === "brother" || relation === "sister") formData.set("sibling_type", siblingType);
     if (relation === "father" || relation === "mother") formData.set("create_union", String(createUnion));
-    if (relation === "son" || relation === "daughter") formData.set("co_parent_id", coParentId);
 
     const result = await createFamilyMemberAction(formData);
     setIsPending(false);
@@ -249,26 +259,51 @@ export function AddMemberModal({
     }
 
     if (relation === "son" || relation === "daughter") {
-      if (coParents.length === 0) {
-        return (
-          <Hint>
-            Se registrará solo como hijo/a de {anchorFirstName}. Si después registras a su otro padre/madre,
-            podrás vincularlo desde la ficha del hijo/a.
-          </Hint>
-        );
-      }
+      const first = (name: string) => name.split(" ")[0];
+      const options: { value: string; label: string; detail?: string }[] = [
+        ...coParents.map((p) => ({
+          value: `with:${p.id}`,
+          label: `De ${anchorFirstName} y ${first(p.name)}`,
+          detail: p.note,
+        })),
+        {
+          value: "solo",
+          label: `Solo de ${anchorFirstName}`,
+          detail: coParents.length > 0 ? "con otra persona o aún no registrada" : "el otro padre/madre aún no está registrado",
+        },
+        ...coParents
+          .filter((p) => p.kind === "partner" || p.kind === "ex")
+          .map((p) => ({
+            value: `step:${p.id}`,
+            label: `Solo de ${first(p.name)}`,
+            detail: `hijastro/a de ${anchorFirstName}`,
+          })),
+      ];
       return (
-        <div>
-          <label className={labelClass}>¿Quién es su otro padre/madre?</label>
-          <select value={coParentId} onChange={(e) => setCoParentChoice(e.target.value)} className={inputClass}>
-            {coParents.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-                {p.note ? ` (${p.note})` : ""}
-              </option>
-            ))}
-            <option value="none">Otra persona / aún no registrada</option>
-          </select>
+        <div className="space-y-1.5">
+          <span className={labelClass}>¿De quién es hijo/a?</span>
+          {options.map((o) => (
+            <label
+              key={o.value}
+              className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer text-xs transition ${
+                childOf === o.value ? "border-emerald-600 bg-emerald-950/30" : "border-neutral-800 hover:border-neutral-700"
+              }`}
+            >
+              <input
+                type="radio"
+                name="child_of_ui"
+                checked={childOf === o.value}
+                onChange={() => setChildOfChoice(o.value)}
+                className="text-emerald-500 focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
+              />
+              <span className="font-medium text-white">{o.label}</span>
+              {o.detail && <span className="text-neutral-500 truncate">· {o.detail}</span>}
+            </label>
+          ))}
+          <p className="text-[11px] text-neutral-500 px-1 pt-1">
+            ¿Ya está registrado en el árbol? Usa <strong className="text-neutral-300">Vincular familiares</strong> en lugar
+            de crearlo de nuevo.
+          </p>
         </div>
       );
     }
@@ -392,7 +427,7 @@ export function AddMemberModal({
                       value={anchorId}
                       onChange={(e) => {
                         setSelectedAnchorId(e.target.value);
-                        setCoParentChoice(null);
+                        setChildOfChoice(null);
                       }}
                       className={inputClass}
                     >
@@ -503,7 +538,10 @@ export function AddMemberModal({
                     <>
                       <UserPlus className="w-4 h-4" />
                       <span>
-                        Guardar {RELATION_OPTIONS.find((o) => o.value === relation)!.label.toLowerCase()} de {anchorFirstName}
+                        Guardar {RELATION_OPTIONS.find((o) => o.value === relation)!.label.toLowerCase()} de{" "}
+                        {(relation === "son" || relation === "daughter") && childOf.startsWith("step:")
+                          ? coParents.find((p) => `step:${p.id}` === childOf)?.name.split(" ")[0] ?? anchorFirstName
+                          : anchorFirstName}
                       </span>
                     </>
                   ) : (

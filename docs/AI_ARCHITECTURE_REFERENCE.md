@@ -319,6 +319,15 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
 5. The server action creates the record in `persons` and the corresponding edges in `parent_child_edges` or `union_edges`.
 6. Call `revalidatePath('/tree')` and `revalidatePath('/')`.
 
+### Linking two existing people (manual, validated link-by-link)
+1. UI: `LinkMembersModal` ("Vincular familiares") in `/tree` and `/` headers. The user picks Person A, a relation ("A es ___ de B": parent, child, sibling_both/maternal/paternal, married, partner, divorced, separated) and Person B.
+2. `previewLinkAction` runs the pure planner `planLink` (`utils/link-planner.ts`) and returns `{ errors, warnings, steps, replaceOptions }` without writing anything. Errors block: cycles, unions between blood relatives, duplicate links, claimed profiles of other users.
+3. `replaceOptions` lists the child's current parents; `parentsToReplace` (`utils/parent-replacement.ts`) pre-checks same-gender or unknown-gender parents (e.g. a father wrongly assigned when a sibling was registered as "both"). Nothing is removed unless checked.
+4. `linkPersonsAction` re-validates on the server and applies the plan. Use this instead of creating duplicate people.
+
+### Registering a step-child
+In `AddMemberModal` → Hijo/Hija → "¿De quién es hijo/a?": `with:<id>` (anchor + partner), `solo` (anchor only, `co_parent_id = "none"`), or `step:<id>` (only the partner's child: sent with `anchor_person_id = <partner>`). The graph (8.1) shows children of in-law partners, labeled `Hijastro/a de X` / `Hermanastro/a`.
+
 ### Unlinking an accidental child from a parent node
 1. Call `unlinkParentChildAction` in `src/features/genealogy/actions.ts`.
 2. Pass `parent_id` and `child_id`.

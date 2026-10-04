@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { checkUserZeroExists } from "@/features/auth/actions";
 import { getFamilyMembers } from "@/features/genealogy/actions";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
+import { LinkMembersModal } from "@/features/genealogy/components/link-members-modal";
 import { FamilyDirectory } from "@/features/genealogy/components/family-directory";
 import { FriendsManagerModal } from "@/features/genealogy/components/friends-manager-modal";
 import { EndorsementsManagerModal } from "@/features/genealogy/components/endorsements-manager-modal";
@@ -250,6 +251,7 @@ export default async function Home({ searchParams }: HomeProps) {
                     <GitFork className="w-4 h-4 rotate-90" />
                     <span>Ver Árbol Visual</span>
                   </Link>
+                  <LinkMembersModal members={availableAnchors} />
                   <AddMemberModal availableAnchors={availableAnchors} />
                 </div>
               </div>

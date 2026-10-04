@@ -396,18 +396,34 @@ export async function getFamilyGraph(
   }
 
   // 8.1 Familias ensambladas (excepto nivel básico): completar cada núcleo familiar visible con
-  //   - los otros progenitores de hermanos, hijos, nietos, sobrinos y primos (p. ej. el padre de un medio hermano)
+  //   - los otros progenitores de tíos, hermanos, hijos, nietos, sobrinos y primos
+  //     (p. ej. el padre de un medio hermano o el segundo esposo de la abuela)
   //   - las parejas de todas las personas visibles (padrastros, yernos/nueras, parejas de abuelos, etc.)
+  //   - los hijos de esas parejas políticas (hijastros, p. ej. los hijos de la esposa de un tío con su expareja)
   if (!(isViewerGuest && viewerTier === "basic")) {
     const visible = new Set(allowedNodeIds);
-    const descendantLike = new Set([...siblingIds, ...childIds, ...grandChildIds, ...nephewNieceIds, ...cousinIds]);
+    const descendantLike = new Set([
+      ...uncleAuntIds,
+      ...siblingIds,
+      ...childIds,
+      ...grandChildIds,
+      ...nephewNieceIds,
+      ...cousinIds,
+    ]);
     allParentEdges?.forEach((e) => {
       if (descendantLike.has(e.child_id) && visible.has(e.child_id)) visible.add(e.parent_id);
     });
+
+    const inLawIds = new Set([...spouseIds, ...siblingSpouseIds, ...uncleSpouseIds]);
     const withPartners = new Set(visible);
     treeVisibleUnions.forEach((u) => {
+      if (visible.has(u.person_a_id) && !visible.has(u.person_b_id)) inLawIds.add(u.person_b_id);
+      if (visible.has(u.person_b_id) && !visible.has(u.person_a_id)) inLawIds.add(u.person_a_id);
       if (visible.has(u.person_a_id)) withPartners.add(u.person_b_id);
       if (visible.has(u.person_b_id)) withPartners.add(u.person_a_id);
+    });
+    allParentEdges?.forEach((e) => {
+      if (inLawIds.has(e.parent_id)) withPartners.add(e.child_id);
     });
     allowedNodeIds = Array.from(withPartners);
   }

@@ -3,9 +3,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { formatFullName, type FamilyMemberItem, type FamilyRelationshipType } from "./types";
-import type { Gender } from "@/types/database.types";
+import type { Gender, UnionType } from "@/types/database.types";
 import { inferKinship, getConnectedFamilyIds } from "./utils/kinship-inference";
 import { isMissingColumnError, MISSING_NAME_COLUMNS_MESSAGE } from "./utils/db-errors";
+import { planLink, LINK_RELATION_LABELS, type LinkPlan, type LinkRelation, type PlannerPerson } from "./utils/link-planner";
 import crypto from "crypto";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
@@ -973,9 +974,11 @@ export interface AnchorRelative {
   name: string;
   gender: Gender;
   note?: string;
+  kind?: "partner" | "ex" | "coparent";
 }
 
 export interface AnchorContext {
+  anchorGender: Gender;
   parents: AnchorRelative[];
   coParents: AnchorRelative[];
   defaultCoParentId: string | null;
@@ -988,7 +991,12 @@ export interface AnchorContext {
  * - defaultCoParentId: la única pareja activa, si existe exactamente una.
  */
 export async function getAnchorContextAction(anchorId: string): Promise<AnchorContext & { error?: string }> {
-  const empty: AnchorContext = { parents: [], coParents: [], defaultCoParentId: null };
+  const empty: AnchorContext = {
+    anchorGender: "unknown",
+    parents: [],
+    coParents: [],
+    defaultCoParentId: null,
+  };
   const supabase = await createClient();
   const {
     data: { user },
@@ -1019,37 +1027,42 @@ export async function getAnchorContextAction(anchorId: string): Promise<AnchorCo
   ]);
 
   const parentIds = Array.from(new Set((parentEdges ?? []).map((e) => e.parent_id)));
-  const childIds = (childEdges ?? []).map((e) => e.child_id);
+  const anchorChildIds = new Set((childEdges ?? []).map((e) => e.child_id));
 
   // Otros progenitores de los hijos ya registrados (co-progenitores aunque no exista unión)
   let otherParentIds: string[] = [];
-  if (childIds.length > 0) {
+  if (anchorChildIds.size > 0) {
     const { data: coEdges } = await supabase
       .from("parent_child_edges")
       .select("parent_id")
-      .in("child_id", childIds)
+      .in("child_id", Array.from(anchorChildIds))
       .neq("parent_id", anchorId);
     otherParentIds = (coEdges ?? []).map((e) => e.parent_id);
   }
 
-  const partnerNotes = new Map<string, string>();
-  const activePartnerIds: string[] = [];
+  const coParentKinds = new Map<string, "partner" | "ex" | "coparent">();
   (unions ?? []).forEach((u) => {
     const partnerId = u.person_a_id === anchorId ? u.person_b_id : u.person_a_id;
     const isEx = u.union_type === "divorced" || u.union_type === "separated";
-    partnerNotes.set(partnerId, isEx ? "Expareja" : "Pareja actual");
-    if (!isEx) activePartnerIds.push(partnerId);
+    coParentKinds.set(partnerId, isEx ? "ex" : "partner");
   });
   otherParentIds.forEach((id) => {
-    if (!partnerNotes.has(id)) partnerNotes.set(id, "Otro progenitor de sus hijos");
+    if (!coParentKinds.has(id)) coParentKinds.set(id, "coparent");
   });
+  const coParentIds = Array.from(coParentKinds.keys());
 
-  const allIds = Array.from(new Set([...parentIds, ...partnerNotes.keys()]));
-  if (allIds.length === 0) return empty;
+  const allIds = Array.from(
+    new Set([
+      anchorId,
+      ...parentIds,
+      ...coParentIds,
+    ])
+  );
 
   // select("*") para no fallar si las columnas de segundo nombre aún no existen
   const { data: persons } = await supabase.from("persons").select("*").in("id", allIds);
-  const toRelative = (id: string, note?: string): AnchorRelative | null => {
+  const NOTES = { partner: "Pareja actual", ex: "Expareja", coparent: "Otro progenitor de sus hijos" } as const;
+  const toRelative = (id: string, kind?: "partner" | "ex" | "coparent"): AnchorRelative | null => {
     const p = persons?.find((x) => x.id === id);
     if (!p) return null;
     return {
@@ -1061,19 +1074,174 @@ export async function getAnchorContextAction(anchorId: string): Promise<AnchorCo
         maternalLastName: p.maternal_last_name,
       }),
       gender: p.gender as Gender,
-      note,
+      note: kind ? NOTES[kind] : undefined,
+      kind,
     };
   };
+  const isRelative = (r: AnchorRelative | null): r is AnchorRelative => r !== null;
 
-  const uniqueActive = Array.from(new Set(activePartnerIds));
+  const activePartnerIds = coParentIds.filter((id) => coParentKinds.get(id) === "partner");
+  const anchorPerson = persons?.find((p) => p.id === anchorId);
 
   return {
-    parents: parentIds.map((id) => toRelative(id)).filter((r): r is AnchorRelative => r !== null),
-    coParents: Array.from(partnerNotes.entries())
-      .map(([id, note]) => toRelative(id, note))
-      .filter((r): r is AnchorRelative => r !== null),
-    defaultCoParentId: uniqueActive.length === 1 ? uniqueActive[0] : null,
+    anchorGender: (anchorPerson?.gender as Gender) ?? "unknown",
+    parents: parentIds.map((id) => toRelative(id)).filter(isRelative),
+    coParents: coParentIds.map((id) => toRelative(id, coParentKinds.get(id))).filter(isRelative),
+    defaultCoParentId: activePartnerIds.length === 1 ? activePartnerIds[0] : null,
   };
+}
+
+/**
+ * Carga personas, aristas y uniones para planificar un vínculo manual entre dos personas
+ * (respetando el alcance familiar del usuario).
+ */
+async function loadLinkPlanInput(
+  supabase: SupabaseServerClient,
+  personAId: string,
+  personBId: string,
+  relation: LinkRelation
+): Promise<{ plan: LinkPlan } | { error: string }> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Debes estar autenticado para realizar esta acción." };
+  if (!personAId || !personBId || !LINK_RELATION_LABELS[relation]) {
+    return { error: "Elige dos personas y el tipo de relación." };
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile?.is_user_zero) {
+    if (!profile?.person_id) return { error: "Tu cuenta no está vinculada a una ficha familiar." };
+    const familySet = await getUserFamilyScope(supabase, user.id, profile.person_id);
+    if (!familySet.has(personAId) || !familySet.has(personBId)) {
+      return { error: "Solo puedes vincular personas de tu propia familia." };
+    }
+  }
+
+  const [{ data: parentEdges }, { data: unions }] = await Promise.all([
+    supabase.from("parent_child_edges").select("id, parent_id, child_id, relationship_type"),
+    supabase.from("union_edges").select("id, person_a_id, person_b_id, union_type, status"),
+  ]);
+
+  const involvedIds = new Set<string>([personAId, personBId]);
+  (parentEdges ?? []).forEach((e) => {
+    if (involvedIds.has(e.child_id) || involvedIds.has(e.parent_id)) {
+      involvedIds.add(e.parent_id);
+      involvedIds.add(e.child_id);
+    }
+  });
+
+  // select("*") para no fallar si las columnas de segundo nombre aún no existen
+  const { data: people } = await supabase.from("persons").select("*").in("id", Array.from(involvedIds));
+  const persons = new Map<string, PlannerPerson>(
+    (people ?? []).map((p) => [
+      p.id,
+      {
+        id: p.id,
+        name: formatFullName({
+          firstName: p.first_name,
+          middleName: p.middle_name,
+          lastName: p.last_name,
+          maternalLastName: p.maternal_last_name,
+        }),
+        gender: p.gender,
+        lockedByOther: Boolean(p.is_claimed && p.claimed_by_user_id !== user.id),
+      },
+    ])
+  );
+
+  return {
+    plan: planLink({
+      personAId,
+      personBId,
+      relation,
+      persons,
+      parentEdges: (parentEdges ?? []).filter((e) => e.relationship_type !== "step"),
+      unions: unions ?? [],
+    }),
+  };
+}
+
+/**
+ * Server Action: Vista previa de un vínculo manual "A es ___ de B" (no modifica nada).
+ */
+export async function previewLinkAction(input: {
+  personAId: string;
+  personBId: string;
+  relation: LinkRelation;
+}): Promise<{ plan?: LinkPlan; error?: string }> {
+  const supabase = await createClient();
+  return loadLinkPlanInput(supabase, input.personAId, input.personBId, input.relation);
+}
+
+/**
+ * Server Action: Aplicar un vínculo manual ya revisado por el usuario.
+ * Se vuelve a validar en el servidor; `removeParentKeys` son las opciones de "quitar progenitor"
+ * que el usuario marcó explícitamente en la vista previa.
+ */
+export async function linkPersonsAction(input: {
+  personAId: string;
+  personBId: string;
+  relation: LinkRelation;
+  removeParentKeys?: string[];
+}): Promise<{ success?: boolean; error?: string }> {
+  const supabase = await createClient();
+  const result = await loadLinkPlanInput(supabase, input.personAId, input.personBId, input.relation);
+  if ("error" in result) return { error: result.error };
+
+  const { plan } = result;
+  if (plan.errors.length > 0) return { error: plan.errors.join(" ") };
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Debes estar autenticado para realizar esta acción." };
+
+  for (const { parentId, childId } of plan.addParentEdges) {
+    const { error } = await supabase.from("parent_child_edges").insert({
+      parent_id: parentId,
+      child_id: childId,
+      relationship_type: "biological",
+      status: "confirmed",
+      created_by_user_id: user.id,
+    });
+    if (error) return { error: `No se pudo crear el vínculo: ${error.message}` };
+  }
+
+  const selected = new Set(input.removeParentKeys ?? []);
+  for (const option of plan.replaceOptions.filter((o) => selected.has(o.key))) {
+    const { error } = await supabase
+      .from("parent_child_edges")
+      .delete()
+      .eq("parent_id", option.parentId)
+      .eq("child_id", option.childId);
+    if (error) return { error: `No se pudo quitar el progenitor anterior: ${error.message}` };
+  }
+
+  if (plan.union) {
+    const { personAId, personBId, existingUnionId } = plan.union;
+    const unionType = plan.union.unionType as UnionType;
+    const { error } = existingUnionId
+      ? await supabase.from("union_edges").update({ union_type: unionType }).eq("id", existingUnionId)
+      : await supabase.from("union_edges").insert({
+          person_a_id: personAId,
+          person_b_id: personBId,
+          union_type: unionType,
+          status: "confirmed",
+          created_by_user_id: user.id,
+        });
+    if (error) return { error: `No se pudo registrar la unión: ${error.message}` };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return { success: true };
 }
 
 /**

@@ -435,6 +435,30 @@ export function inferKinship({
     };
   }
 
+  // 11.4 Hijo/a de la pareja de un familiar, sin ser hijo/a de ese familiar -> Hijastro/a / Hermanastro/a
+  for (const parentId of targetParentIds) {
+    const stepRelativeId = partnersOf(parentId).find((pid) => !targetParentIds.includes(pid) && pid !== targetPersonId);
+    if (!stepRelativeId) continue;
+    const parentObj = personsMap?.get(parentId);
+    if (rootParentIds.includes(stepRelativeId)) {
+      return {
+        relationshipLabel: isFemale ? "Hermanastra" : isMale ? "Hermanastro" : "Hermanastro/a",
+        relationshipCategory: "other",
+        explanation: `Hijo/a de ${parentObj?.firstName ?? "la pareja de tu progenitor"}, pareja de tu ${
+          personsMap?.get(stepRelativeId)?.gender === "female" ? "madre" : "padre"
+        }`,
+        degree: 2,
+      };
+    }
+    const stepRelative = personsMap?.get(stepRelativeId);
+    return {
+      relationshipLabel: `${isFemale ? "Hijastra" : isMale ? "Hijastro" : "Hijastro/a"} de ${stepRelative?.firstName ?? "un familiar"}`,
+      relationshipCategory: "other",
+      explanation: `Hijo/a de ${parentObj?.firstName ?? "su pareja"}, pareja de ${stepRelative?.firstName ?? "un familiar"}`,
+      degree: 3,
+    };
+  }
+
   // Fallback por defecto
   return {
     relationshipLabel: isFemale ? "Familiar (Femenino)" : isMale ? "Familiar (Masculino)" : "Familiar",

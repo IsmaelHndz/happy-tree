@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getFamilyGraph } from "@/features/genealogy/services/get-family-graph";
 import { TreeCanvas } from "@/features/genealogy/components/tree-canvas";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
+import { LinkMembersModal } from "@/features/genealogy/components/link-members-modal";
 import { TreeSelector } from "@/features/genealogy/components/tree-selector";
 import { FriendsManagerModal } from "@/features/genealogy/components/friends-manager-modal";
 import { formatFullName } from "@/features/genealogy/types";
@@ -92,11 +93,14 @@ export default async function TreePage({ searchParams }: TreePageProps) {
 
           {/* Solo se permite añadir familiares si estamos en nuestro propio árbol */}
           {!graph.isViewerGuest && (
-            <AddMemberModal
-              defaultAnchorId={graph.focusPerson.id}
-              defaultAnchorName={formatFullName(graph.focusPerson)}
-              availableAnchors={availableAnchors}
-            />
+            <>
+              <LinkMembersModal members={availableAnchors} />
+              <AddMemberModal
+                defaultAnchorId={graph.focusPerson.id}
+                defaultAnchorName={formatFullName(graph.focusPerson)}
+                availableAnchors={availableAnchors}
+              />
+            </>
           )}
 
           <form action="/auth/signout" method="POST">
