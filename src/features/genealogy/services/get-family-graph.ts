@@ -3,6 +3,8 @@ import type { FamilyGraphData, TreeNodeData, TreeEdgeData, AccessibleTreeOption 
 import type { Gender } from "@/types/database.types";
 import type { TreePermissionTier } from "../types";
 import { inferKinship, getConnectedFamilyIds } from "../utils/kinship-inference";
+import { partitionUnionsByIntegrity } from "../utils/graph-integrity";
+import { computeTreeLayout } from "../utils/tree-layout";
 
 /**
  * Consulta la base de datos y calcula la distribución espacial por generaciones del árbol familiar,
@@ -172,7 +174,22 @@ export async function getFamilyGraph(
     return true;
   };
 
-  const treeVisibleUnions = allUnions?.filter(isUnionVisibleInTree) ?? [];
+  const rawTreeVisibleUnions = allUnions?.filter(isUnionVisibleInTree) ?? [];
+
+  // Saneamiento biológico: filtrar uniones imposibles (p. ej. madre-hijo o entre hermanos)
+  const biologicalParentEdges = (allParentEdges ?? [])
+    .filter((e) => e.relationship_type !== "step")
+    .map((e) => ({
+      parent_id: e.parent_id,
+      child_id: e.child_id,
+    }));
+
+  const { validUnions: saneUnions } = partitionUnionsByIntegrity(
+    rawTreeVisibleUnions,
+    biologicalParentEdges
+  );
+
+  const treeVisibleUnions = saneUnions;
 
   // Red familiar propia del usuario activo (componente conectado)
   const userFamilyIds = getConnectedFamilyIds(
@@ -537,7 +554,7 @@ export async function getFamilyGraph(
   const rawNodes: TreeNodeData[] = persons.map((p) => {
     const generation = genMap.get(p.id) ?? 0;
 
-    const matchedUnion = allUnions?.find(
+    const matchedUnion = saneUnions.find(
       (u) =>
         u.status !== "rejected" &&
         (u.person_a_id === p.id || u.person_b_id === p.id) &&
@@ -692,332 +709,36 @@ export async function getFamilyGraph(
     }
   });
 
-  // 15. Cálculo de Posiciones Dinámicas por Generación con Distribución Bilateral Simétrica (Rama Materna vs Rama Paterna)
-  const NODE_WIDTH = 220;
-  const NODE_HEIGHT = 130;
-  const GAP_X = 50;
-  const GAP_Y = 150;
+  // 15. Cálculo de Posiciones Dinámicas mediante TreeLayout (Baricéntrico + Bilateral Simétrico + Multi-Pareja)
+  const layoutInputNodes = rawNodes.map((n) => ({
+    id: n.id,
+    generation: n.generation,
+    gender: n.gender,
+    birthDate: n.birthDate,
+    firstName: n.firstName,
+  }));
 
-  // Identificar progenitores del foco para separación simétrica de ramas
-  const motherPerson =
-    rawNodes.find(
-      (n) => parentIds.includes(n.id) && (n.gender === "female" || ((n.relationshipLabel || "").toLowerCase().includes("madre")))
-    ) || (parentIds.length > 0 ? rawNodes.find((n) => n.id === parentIds[0]) : null);
+  const layoutInputEdges = edges
+    .filter((e) => e.type === "parent-child" || e.type === "union")
+    .map((e) => ({
+      sourceId: e.sourceId,
+      targetId: e.targetId,
+      type: e.type as "parent-child" | "union",
+    }));
 
-  const fatherPerson =
-    rawNodes.find(
-      (n) => parentIds.includes(n.id) && n.id !== motherPerson?.id && (n.gender === "male" || ((n.relationshipLabel || "").toLowerCase().includes("padre")))
-    ) || (parentIds.length > 1 ? rawNodes.find((n) => n.id === parentIds[1]) : null);
-
-  const motherId = motherPerson?.id;
-  const fatherId = fatherPerson?.id;
-  const motherParents = motherId ? (parentsOf.get(motherId) || []) : [];
-  const fatherParents = fatherId ? (parentsOf.get(fatherId) || []) : [];
-
-  // Precalcular conjuntos planos sin recursión (evita stack overflow)
-  const maternalIds = new Set<string>();
-  if (motherId) maternalIds.add(motherId);
-  motherParents.forEach((id) => maternalIds.add(id));
-
-  const paternalIds = new Set<string>();
-  if (fatherId) paternalIds.add(fatherId);
-  fatherParents.forEach((id) => paternalIds.add(id));
-
-  rawNodes.forEach((n) => {
-    if (n.id === fatherId || n.id === motherId) return;
-
-    const nParents = parentsOf.get(n.id) || [];
-    const label = (n.relationshipLabel || "").toLowerCase();
-    const explanation = (n.relationshipExplanation || "").toLowerCase();
-
-    if (motherParents.length > 0 && nParents.some((p) => motherParents.includes(p))) {
-      maternalIds.add(n.id);
-    } else if (label.includes("matern") || explanation.includes("madre")) {
-      maternalIds.add(n.id);
-    }
-
-    if (fatherParents.length > 0 && nParents.some((p) => fatherParents.includes(p))) {
-      paternalIds.add(n.id);
-    } else if (label.includes("patern") || explanation.includes("padre")) {
-      paternalIds.add(n.id);
-    }
+  const positions = computeTreeLayout({
+    nodes: layoutInputNodes,
+    edges: layoutInputEdges,
+    focusId: centerPersonId,
   });
 
-  // Parejas de tíos o cónyuges (un solo paso plano sin llamadas recursivas, sin cruzar unión de los padres)
-  rawNodes.forEach((n) => {
-    if (n.id === motherId || n.id === fatherId) return;
-    const partnerId = n.unionInfo?.partnerId;
-    if (partnerId) {
-      if (partnerId === motherId || partnerId === fatherId) return;
-      if (maternalIds.has(partnerId)) maternalIds.add(n.id);
-      if (paternalIds.has(partnerId)) paternalIds.add(n.id);
-    }
-  });
-
-  if (fatherId) maternalIds.delete(fatherId);
-  if (motherId) paternalIds.delete(motherId);
-
-  const allGens = Array.from(new Set(rawNodes.map((n) => n.generation))).sort((a, b) => a - b);
-  const minGen = Math.min(...allGens, 0);
-  const positionedNodes: TreeNodeData[] = [];
-
-  allGens.forEach((gen) => {
-    const genNodes = rawNodes.filter((n) => n.generation === gen);
-    const count = genNodes.length;
-    if (count === 0) return;
-
-    // Ordenamiento inteligente en cada fila para asegurar cohesión visual y distribución por ramas familiares:
-    genNodes.sort((a, b) => {
-      if (gen === 0) {
-        const getRank = (n: typeof rawNodes[0]) => {
-          if (n.id === centerPersonId) return 20;
-          if (spouseIds.includes(n.id)) return 10;
-          if (siblingIds.includes(n.id)) {
-            const isMat = maternalIds.has(n.id);
-            const isPat = paternalIds.has(n.id);
-            if (isMat && !isPat) return 15; // Medio hermano materno hacia la izquierda
-            if (isPat && !isMat) return 25; // Medio hermano paterno hacia la derecha
-            return 22; // Hermano de ambos progenitores
-          }
-          if (siblingSpouseIds.includes(n.id)) return 30;
-          if (maternalIds.has(n.id)) return 5;
-          if (paternalIds.has(n.id)) return 35;
-          return 20;
-        };
-        return getRank(a) - getRank(b);
-      } else if (gen === -1) {
-        // Generación de Progenitores y Tíos:
-        // Rama materna a la izquierda (pareja de tío materno -> tío materno -> madre)
-        // Rama paterna a la derecha (padre -> tío paterno -> pareja de tío paterno)
-        const getRank = (n: typeof rawNodes[0]) => {
-          // Progenitores directos del foco (prioridad canónica fija)
-          if (n.id === motherId) return 30;             // Madre (Rubi, centro-izquierda)
-          if (n.id === fatherId) return 40;             // Padre (Jorge Andrés, centro-derecha)
-
-          const mat = maternalIds.has(n.id);
-          const pat = paternalIds.has(n.id);
-
-          if (mat && !pat) {
-            if (uncleSpouseIds.includes(n.id)) return 10; // Eva Godoy (extremo izquierdo)
-            if (uncleAuntIds.includes(n.id)) return 20;   // Luis Rodriguez (al lado de su hermana Rubi)
-            return 25;
-          }
-
-          if (pat && !mat) {
-            if (uncleAuntIds.includes(n.id)) return 50;   // Tío paterno (al lado de papá)
-            if (uncleSpouseIds.includes(n.id)) return 60; // Pareja de tío paterno (extremo derecho)
-            return 45;
-          }
-
-          if (uncleSpouseIds.includes(n.id)) return 10;
-          if (uncleAuntIds.includes(n.id)) return 20;
-          return 25;
-        };
-        return getRank(a) - getRank(b);
-      } else if (gen < -1) {
-        // Abuelos / Bisabuelos:
-        // Abuelos maternos a la izquierda, abuelos paternos a la derecha
-        const getRank = (n: typeof rawNodes[0]) => {
-          if (maternalIds.has(n.id)) return 10;
-          if (paternalIds.has(n.id)) return 30;
-          return 20;
-        };
-        return getRank(a) - getRank(b);
-      } else {
-        // Hijos directos al centro, sobrinos hacia la rama de su padre/madre
-        const getRank = (n: typeof rawNodes[0]) => {
-          if (childIds.includes(n.id)) return 20;
-          if (nephewNieceIds.includes(n.id)) {
-            if (maternalIds.has(n.id)) return 10;
-            return 30;
-          }
-          if (grandChildIds.includes(n.id)) return 25;
-          return 20;
-        };
-        return getRank(a) - getRank(b);
-      }
-    });
-
-    const y = (gen - minGen) * (NODE_HEIGHT + GAP_Y);
-
-    if (gen > 0) {
-      // Posicionamiento de descendientes agrupados directamente bajo su rama parental (padres / tíos)
-      const positionedMap = new Map(positionedNodes.map((n) => [n.id, n]));
-      const clusterMap = new Map<
-        string,
-        {
-          parentKey: string;
-          targetCenterX: number;
-          nodes: TreeNodeData[];
-        }
-      >();
-      const assignedNodeIds = new Set<string>();
-
-      // Fase 1: Agrupar hijos por unidad parental ya posicionada en generaciones superiores
-      genNodes.forEach((node) => {
-        const pIds = (parentsOf.get(node.id) || []).filter((pId) => positionedMap.has(pId));
-        if (pIds.length > 0) {
-          const pNodes = pIds.map((id) => positionedMap.get(id)!);
-          const parentKey = pNodes.map((p) => p.id).sort().join("_");
-          let targetCenterX = 0;
-
-          if (pNodes.length >= 2) {
-            targetCenterX = (pNodes[0].x! + pNodes[1].x! + NODE_WIDTH) / 2;
-          } else {
-            targetCenterX = pNodes[0].x! + NODE_WIDTH / 2;
-          }
-
-          if (!clusterMap.has(parentKey)) {
-            clusterMap.set(parentKey, {
-              parentKey,
-              targetCenterX,
-              nodes: [],
-            });
-          }
-          clusterMap.get(parentKey)!.nodes.push(node);
-          assignedNodeIds.add(node.id);
-        }
-      });
-
-      // Fase 2: Cónyuges/parejas de miembros ya agrupados (colocar contiguos a su pareja)
-      genNodes.forEach((node) => {
-        if (assignedNodeIds.has(node.id)) return;
-        const partnerId = node.unionInfo?.partnerId;
-        if (partnerId) {
-          for (const cluster of clusterMap.values()) {
-            const partnerIdx = cluster.nodes.findIndex((n) => n.id === partnerId);
-            if (partnerIdx !== -1) {
-              cluster.nodes.splice(partnerIdx + 1, 0, node);
-              assignedNodeIds.add(node.id);
-              break;
-            }
-          }
-        }
-      });
-
-      // Fase 3: Nodos sin progenitores ni parejas identificados en el árbol
-      genNodes.forEach((node) => {
-        if (assignedNodeIds.has(node.id)) return;
-        const key = `orphan_${node.id}`;
-        let targetCenterX = 0;
-        if (maternalIds.has(node.id)) targetCenterX = -300;
-        else if (paternalIds.has(node.id)) targetCenterX = 300;
-
-        clusterMap.set(key, {
-          parentKey: key,
-          targetCenterX,
-          nodes: [node],
-        });
-        assignedNodeIds.add(node.id);
-      });
-
-      const clusters = Array.from(clusterMap.values()).map((c) => {
-        const k = c.nodes.length;
-        const width = k * NODE_WIDTH + (k - 1) * GAP_X;
-        return {
-          ...c,
-          width,
-        };
-      });
-
-      // Ordenar grupos de descendientes de izquierda a derecha según el centro X de sus progenitores
-      clusters.sort((a, b) => a.targetCenterX - b.targetCenterX);
-
-      // Algoritmo de relajación por mínimos cuadrados y evasión de colisiones por bloques contiguos
-      let blocks = clusters.map((c) => ({
-        clusters: [c],
-        offsets: [0],
-      }));
-
-      const computeBlockPositions = (block: typeof blocks[0]) => {
-        const k = block.clusters.length;
-        let sum = 0;
-        for (let j = 0; j < k; j++) {
-          sum += block.clusters[j].targetCenterX - block.offsets[j];
-        }
-        const c0Center = sum / k;
-        const startX = c0Center - block.clusters[0].width / 2;
-        const lastClusterIdx = k - 1;
-        const lastCenter = c0Center + block.offsets[lastClusterIdx];
-        const endX = lastCenter + block.clusters[lastClusterIdx].width / 2;
-        const totalSpan = endX - startX;
-        return { c0Center, startX, endX, totalSpan };
-      };
-
-      let merged = true;
-      while (merged && blocks.length > 1) {
-        merged = false;
-        const newBlocks: typeof blocks = [];
-        let i = 0;
-        while (i < blocks.length) {
-          let curr = blocks[i];
-          let currPos = computeBlockPositions(curr);
-
-          while (i + 1 < blocks.length) {
-            const next = blocks[i + 1];
-            const nextPos = computeBlockPositions(next);
-
-            if (currPos.endX + GAP_X > nextPos.startX) {
-              const lastClusterIdx = curr.clusters.length - 1;
-              const lastCluster = curr.clusters[lastClusterIdx];
-              const nextFirstCluster = next.clusters[0];
-
-              const bridgeGap =
-                lastCluster.width / 2 + GAP_X + nextFirstCluster.width / 2;
-              const baseOffset = curr.offsets[lastClusterIdx] + bridgeGap;
-
-              const combinedClusters = [...curr.clusters, ...next.clusters];
-              const combinedOffsets = [
-                ...curr.offsets,
-                ...next.offsets.map((o) => baseOffset + o),
-              ];
-
-              curr = {
-                clusters: combinedClusters,
-                offsets: combinedOffsets,
-              };
-              currPos = computeBlockPositions(curr);
-              merged = true;
-              i++;
-            } else {
-              break;
-            }
-          }
-          newBlocks.push(curr);
-          i++;
-        }
-        blocks = newBlocks;
-      }
-
-      blocks.forEach((block) => {
-        const { c0Center } = computeBlockPositions(block);
-        block.clusters.forEach((cluster, j) => {
-          const clusterCenter = c0Center + block.offsets[j];
-          const clusterStartX = clusterCenter - cluster.width / 2;
-          cluster.nodes.forEach((node, nodeIdx) => {
-            const x = clusterStartX + nodeIdx * (NODE_WIDTH + GAP_X);
-            positionedNodes.push({
-              ...node,
-              x,
-              y,
-            });
-          });
-        });
-      });
-    } else {
-      // Para gen <= 0 (foco y ancestros), centrado bilateral simétrico regular
-      const totalWidth = count * NODE_WIDTH + (count - 1) * GAP_X;
-      const startX = -totalWidth / 2;
-
-      genNodes.forEach((node, index) => {
-        const x = startX + index * (NODE_WIDTH + GAP_X);
-        positionedNodes.push({
-          ...node,
-          x,
-          y,
-        });
-      });
-    }
+  const positionedNodes: TreeNodeData[] = rawNodes.map((node) => {
+    const pos = positions.get(node.id);
+    return {
+      ...node,
+      x: pos ? pos.x : 0,
+      y: pos ? pos.y : (node.generation ?? 0) * (130 + 150),
+    };
   });
 
   const availableMembers = Array.from(

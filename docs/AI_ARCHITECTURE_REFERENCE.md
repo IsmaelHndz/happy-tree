@@ -1,6 +1,7 @@
 # HAPPY TREE — AI AGENT ARCHITECTURAL & SYSTEM REFERENCE MANUAL
 > **Audience**: AI Agents, LLM Pair Programmers, Autonomous Coding Assistants.  
 > **Purpose**: Single-source-of-truth technical blueprint. Read this file to understand the architecture, data flow, layout algorithms, security boundaries, and known edge-case gotchas without crawling the whole codebase.
+> **Full standalone mirror**: [docs/AI_ARCHITECTURE_REFERENCE.md](file:///Users/ismael/Developer/happy-tree/docs/AI_ARCHITECTURE_REFERENCE.md)
 
 ---
 
@@ -24,6 +25,14 @@
 7. **Descendant Generational Alignment (`gen > 0`)**:
    - Descendant generations must NOT be centered across `x = 0`. Each sibling cluster must align directly underneath the horizontal midpoint of their parent unit in `gen - 1`: `targetCenterX = (P1.x + P2.x + NODE_WIDTH) / 2`.
    - Multi-cluster rows must resolve spacing collisions using 1D least-squares block merging with `GAP_X = 50px`, maintaining parental vertical drop symmetry without overlapping.
+8. **Biological Union Sanity & Non-Contradiction**:
+   - Marital / partner unions (`union_edges`) MUST NEVER exist between individuals who share direct biological parent-child, ancestor-descendant, or full/half sibling relationships.
+   - `partitionUnionsByIntegrity` in `graph-integrity.ts` automatically partitions and purges invalid unions in $O(V+E)$ before BFS traversal or layout calculation, preventing corrupt historical data from breaking tree hierarchy.
+   - Database triggers (`assert_union_integrity` and `assert_parent_edge_integrity`) prevent invalid unions and parent cycles at the persistence layer.
+9. **Blended Families & Multi-Partner Barycentric Layout**:
+   - An individual with multiple partners (ex-spouses, current partner, co-parents) is placed contiguously as a generational axis: `[Partner A] [Person] [Partner B]`.
+   - Each sibling group aligns under the horizontal midpoint of their biological parents' union (`resolveChildAnchor`).
+   - Adding a child in `createFamilyMemberAction` only auto-links to a spouse if exactly ONE active spouse exists, or if `co_parent_id` is explicitly passed.
 
 ---
 
@@ -63,7 +72,9 @@ src/
 │   │   ├── services/
 │   │   │   └── get-family-graph.ts # GENERATIONAL BFS ENGINE & BILATERAL LAYOUT (CORE)
 │   │   ├── utils/
-│   │   │   └── kinship-inference.ts # Deduce exact kinship labels + getConnectedFamilyIds
+│   │   │   ├── kinship-inference.ts # Deduce exact kinship labels + getConnectedFamilyIds
+│   │   │   ├── graph-integrity.ts   # Pure O(V+E) union integrity validator & partitioner
+│   │   │   └── tree-layout.ts       # Pure coordinate layout engine & collision resolver
 │   │   └── components/
 │   │       ├── tree-canvas.tsx         # Pan/Zoom SVG canvas, orthogonal bus bars, node rendering
 │   │       ├── tree-selector.tsx       # Dropdown: My Tree vs. Approved Friend Trees
@@ -272,6 +283,18 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
 - **The Bug**: Centering every generation at `x = 0` via `startX = -totalWidth / 2` caused children to be placed far from their parents when the parents were off-center (e.g. Jorge Andrés & Rubi on the left, but their children Ismael & Jorge Jr. placed under maternal uncles Luis & Ivan in the center). This caused awkward 400px horizontal detours on parent-child drop lines.
 - **The Solution**: For all descendant generations (`gen > 0`), group children into sibling clusters by parent unit in `gen - 1`, align each cluster directly under the parents' midpoint `(p1.x + p2.x + NODE_WIDTH) / 2`, and apply 1D block-merging with least-squares relaxation to prevent collisions.
 
+### ⚠️ Pitfall 7: Spurious Union Distorting Generational BFS
+- **The Bug**: If a spurious union existed between a parent and child (e.g. uncle linked as spouse to grandmother Audelia), BFS propagation along `spousesOf` placed the uncle at generation -2 (same generation as grandmother). This caused the uncle to be treated as a grandparent, and his children/nephews to be displaced across the canvas.
+- **The Solution**: Sanitize `allUnions` immediately upon load using `partitionUnionsByIntegrity(rawTreeVisibleUnions, biologicalParentEdges)`. All downstream BFS, `spousesOf`, `matchedUnion`, `unionInfo`, and layout calculation MUST ONLY use `validUnions`.
+
+### ⚠️ Pitfall 8: Global `.delete().eq('parent_id', personId)` Orphaning Legitimate Children
+- **The Bug**: In `convertParentToSiblingAction`, running `delete().eq('parent_id', personId)` wiped out ALL child edges of `personId`, including any legitimate children that person had with their real partner.
+- **The Solution**: Only delete parent edges where `child_id in [anchorPersonId, ...siblingIds]`. Never wipe out children indiscriminately. Also purge any erroneous `union_edges` between `personId` and the anchor's parents.
+
+### ⚠️ Pitfall 9: Indiscriminate Spouse-Linking on Child Creation
+- **The Bug**: When creating a child in `createFamilyMemberAction`, the system queried all partners of the anchor and linked the new child to ALL of them. If the anchor had previous marriages or blended family partners, the child was falsely assigned to multiple co-parents.
+- **The Solution**: Only link automatically to a second parent if the anchor has exactly ONE confirmed active partner. If multiple partners exist or none exist, require `co_parent_id` or leave as a single-parent link until explicitly specified.
+
 ---
 
 ## 7. How to Implement Common Tasks
@@ -317,3 +340,4 @@ Ensure `next build` passes with 0 TypeScript errors.
 
 ---
 *Maintained for Antigravity AI Agents & Deepmind Coding Systems.*
+

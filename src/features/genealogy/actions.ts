@@ -299,6 +299,7 @@ export async function createFamilyMemberAction(formData: FormData) {
   const relationship = (formData.get("relationship") as FamilyRelationshipType) || "father";
   const siblingType = (formData.get("sibling_type") as "both" | "maternal" | "paternal") || "both";
   const createUnion = formData.get("create_union") === "true";
+  const coParentId = (formData.get("co_parent_id") as string)?.trim() || null;
   const inviteEmail = (formData.get("invite_email") as string)?.trim() || null;
 
   if (!firstName || !lastName) {
@@ -404,32 +405,48 @@ export async function createFamilyMemberAction(formData: FormData) {
       created_by_user_id: user.id,
     });
 
-    // Si la persona de referencia tiene cónyuge/pareja actual, vincular al hijo también con la pareja
-    const { data: spousesA } = await supabase
-      .from("union_edges")
-      .select("person_b_id, union_type")
-      .eq("person_a_id", currentPersonId)
-      .not("union_type", "in", '("divorced","separated")');
-
-    const { data: spousesB } = await supabase
-      .from("union_edges")
-      .select("person_a_id, union_type")
-      .eq("person_b_id", currentPersonId)
-      .not("union_type", "in", '("divorced","separated")');
-
-    const spouseIds = [
-      ...(spousesA?.map((s) => s.person_b_id) ?? []),
-      ...(spousesB?.map((s) => s.person_a_id) ?? []),
-    ];
-
-    for (const spId of spouseIds) {
+    // Si se especificó un co-progenitor explícito, vincularlo
+    if (coParentId) {
       await supabase.from("parent_child_edges").insert({
-        parent_id: spId,
+        parent_id: coParentId,
         child_id: newPersonId,
         relationship_type: "biological",
         status: "confirmed",
         created_by_user_id: user.id,
       });
+    } else {
+      // Buscar cónyuge/pareja activa (no divorciada ni separada)
+      const { data: spousesA } = await supabase
+        .from("union_edges")
+        .select("person_b_id, union_type")
+        .eq("person_a_id", currentPersonId)
+        .eq("status", "confirmed")
+        .not("union_type", "in", '("divorced","separated")');
+
+      const { data: spousesB } = await supabase
+        .from("union_edges")
+        .select("person_a_id, union_type")
+        .eq("person_b_id", currentPersonId)
+        .eq("status", "confirmed")
+        .not("union_type", "in", '("divorced","separated")');
+
+      const spouseIds = [
+        ...(spousesA?.map((s) => s.person_b_id) ?? []),
+        ...(spousesB?.map((s) => s.person_a_id) ?? []),
+      ];
+
+      // SÓLO si la persona de referencia tiene exactamente UNA pareja activa conocida,
+      // se vincula automáticamente como segundo progenitor.
+      // Si tiene múltiples parejas o ninguna, NO adivinar ni vincular a múltiples cónyuges.
+      if (spouseIds.length === 1) {
+        await supabase.from("parent_child_edges").insert({
+          parent_id: spouseIds[0],
+          child_id: newPersonId,
+          relationship_type: "biological",
+          status: "confirmed",
+          created_by_user_id: user.id,
+        });
+      }
     }
   } else if (relationship === "spouse" || relationship === "partner") {
     await supabase.from("union_edges").insert({
@@ -1384,27 +1401,51 @@ export async function convertParentToSiblingAction({
     return { error: "Debes estar autenticado para realizar esta acción." };
   }
 
-  // 1. Desvincular a personId como padre/progenitor de anchorPersonId y de cualquier hijo que comparta
-  await supabase
-    .from("parent_child_edges")
-    .delete()
-    .eq("parent_id", personId);
-
-  // 2. Consultar los progenitores reales de la persona ancla (anchorPersonId)
+  // 1. Consultar los progenitores reales de la persona ancla (anchorPersonId), excluyendo a personId
   const { data: anchorParents } = await supabase
     .from("parent_child_edges")
     .select("parent_id, persons:parent_id(id, gender)")
-    .eq("child_id", anchorPersonId);
+    .eq("child_id", anchorPersonId)
+    .neq("parent_id", personId);
+
+  const parentIds = (anchorParents || []).map((ap) => ap.parent_id);
+
+  // 2. Consultar los hermanos de la persona ancla para desvincular a personId de esa rama únicamente
+  const { data: siblingEdges } = parentIds.length > 0
+    ? await supabase
+        .from("parent_child_edges")
+        .select("child_id")
+        .in("parent_id", parentIds)
+    : { data: [] };
+
+  const conflictedChildIds = Array.from(
+    new Set([anchorPersonId, ...(siblingEdges?.map((s) => s.child_id) ?? [])])
+  );
+
+  // 3. Desvincular a personId ÚNICAMENTE de la persona ancla y de sus hermanos
+  // (NUNCA borrar a ciegas los hijos legítimos propios que personId pudiera tener)
+  for (const cId of conflictedChildIds) {
+    await supabase
+      .from("parent_child_edges")
+      .delete()
+      .eq("parent_id", personId)
+      .eq("child_id", cId);
+  }
+
+  // 4. Eliminar cualquier unión conyugal espuria entre personId y los progenitores del ancla,
+  // así como entre personId y el ancla o sus hermanos
+  const allConflictedPartnerIds = Array.from(
+    new Set([...parentIds, ...conflictedChildIds])
+  );
+
+  for (const conflictId of allConflictedPartnerIds) {
+    await supabase
+      .from("union_edges")
+      .delete()
+      .or(`and(person_a_id.eq.${personId},person_b_id.eq.${conflictId}),and(person_a_id.eq.${conflictId},person_b_id.eq.${personId})`);
+  }
 
   if (anchorParents && anchorParents.length > 0) {
-    // 3. Eliminar cualquier unión conyugal artificial entre personId y los progenitores de anchorPersonId
-    const parentIds = anchorParents.map((ap) => ap.parent_id);
-    for (const pId of parentIds) {
-      await supabase
-        .from("union_edges")
-        .delete()
-        .or(`and(person_a_id.eq.${personId},person_b_id.eq.${pId}),and(person_a_id.eq.${pId},person_b_id.eq.${personId})`);
-    }
 
     // 4. Vincular a personId como HIJO de los progenitores de anchorPersonId según siblingType
     let targetParentIds: string[] = [];
