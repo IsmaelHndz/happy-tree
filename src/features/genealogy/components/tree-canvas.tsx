@@ -548,6 +548,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   )}
                   {/* Solo se puede editar si es su propia ficha personal (isSelf) O si es una ficha no reclamada */}
                   {(() => {
+                    if (graph.isViewerGuest) return null;
                     const isSelfNode = node.id === graph.focusPerson.id || node.relationshipCategory === "self";
                     if (!isSelfNode && node.isClaimed) return null;
                     return (

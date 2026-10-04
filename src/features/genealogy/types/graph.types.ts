@@ -67,10 +67,21 @@ export interface AvailableMemberOption {
   relationshipLabel: string;
 }
 
+export interface AccessibleTreeOption {
+  targetUserId: string;
+  targetPersonId: string;
+  ownerName: string;
+  tier: "basic" | "intermediate" | "advanced";
+}
+
 export interface FamilyGraphData {
   nodes: TreeNodeData[];
   edges: TreeEdgeData[];
   focusPerson: FocusPersonInfo;
   availableMembers: AvailableMemberOption[];
   isUserZero: boolean;
+  viewerTier?: "basic" | "intermediate" | "advanced";
+  isViewerGuest?: boolean;
+  treeOwnerName?: string;
+  accessibleTrees?: AccessibleTreeOption[];
 }

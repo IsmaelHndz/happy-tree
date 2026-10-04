@@ -5,6 +5,7 @@ import { checkUserZeroExists } from "@/features/auth/actions";
 import { getFamilyMembers } from "@/features/genealogy/actions";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { FamilyDirectory } from "@/features/genealogy/components/family-directory";
+import { FriendsManagerModal } from "@/features/genealogy/components/friends-manager-modal";
 import { formatFullName, type FamilyMemberItem } from "@/features/genealogy/types";
 import {
   GitFork,
@@ -144,6 +145,8 @@ export default async function Home({ searchParams }: HomeProps) {
             Diagnóstico DB
           </Link>
 
+          {user && <FriendsManagerModal />}
+
           {user ? (
             <form action="/auth/signout" method="POST">
               <button
@@ -204,7 +207,8 @@ export default async function Home({ searchParams }: HomeProps) {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                  <FriendsManagerModal />
                   <Link
                     href="/tree"
                     className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-semibold text-xs shadow-md shadow-emerald-700/20 transition hover:scale-[1.02]"

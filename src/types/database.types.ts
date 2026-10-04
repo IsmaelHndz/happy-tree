@@ -11,6 +11,8 @@ export type ParentChildRelationshipType = "biological" | "adopted" | "foster" | 
 export type UnionType = "married" | "civil_union" | "divorced" | "separated" | "partner";
 export type EdgeStatus = "pending_confirmation" | "confirmed" | "rejected";
 export type InvitationStatus = "pending" | "accepted" | "expired" | "revoked";
+export type TreePermissionTier = "basic" | "intermediate" | "advanced";
+export type TreeAccessStatus = "pending" | "approved" | "rejected" | "revoked";
 
 export interface Database {
   public: {
@@ -240,6 +242,51 @@ export interface Database {
           expires_at?: string;
           used_at?: string | null;
           created_at?: string;
+        };
+        Relationships: [];
+      };
+      tree_access_shares: {
+        Row: {
+          id: string;
+          granter_user_id: string;
+          granter_person_id: string;
+          requester_user_id: string;
+          requester_person_id: string | null;
+          tier: TreePermissionTier;
+          status: TreeAccessStatus;
+          request_message: string | null;
+          requested_at: string;
+          responded_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          granter_user_id: string;
+          granter_person_id: string;
+          requester_user_id: string;
+          requester_person_id?: string | null;
+          tier?: TreePermissionTier;
+          status?: TreeAccessStatus;
+          request_message?: string | null;
+          requested_at?: string;
+          responded_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          granter_user_id?: string;
+          granter_person_id?: string;
+          requester_user_id?: string;
+          requester_person_id?: string | null;
+          tier?: TreePermissionTier;
+          status?: TreeAccessStatus;
+          request_message?: string | null;
+          requested_at?: string;
+          responded_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };

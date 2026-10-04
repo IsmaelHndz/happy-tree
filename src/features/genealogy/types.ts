@@ -144,3 +144,34 @@ export function calculateAge(
   return Math.max(0, age);
 }
 
+export type TreePermissionTier = "basic" | "intermediate" | "advanced";
+export type TreeAccessStatus = "pending" | "approved" | "rejected" | "revoked";
+
+export interface TreeAccessShareItem {
+  id: string;
+  granterUserId: string;
+  granterPersonId: string;
+  granterName: string;
+  granterEmail?: string | null;
+  requesterUserId: string;
+  requesterPersonId?: string | null;
+  requesterName: string;
+  requesterEmail?: string | null;
+  tier: TreePermissionTier;
+  status: TreeAccessStatus;
+  requestMessage?: string | null;
+  requestedAt: string;
+  respondedAt?: string | null;
+  isOutgoing: boolean; // true si yo solicité, false si yo soy el dueño
+}
+
+export interface UserSearchResultItem {
+  userId: string;
+  personId?: string | null;
+  fullName: string;
+  email: string;
+  alreadyRequested: boolean;
+  existingStatus?: TreeAccessStatus | null;
+  existingTier?: TreePermissionTier | null;
+}
+
