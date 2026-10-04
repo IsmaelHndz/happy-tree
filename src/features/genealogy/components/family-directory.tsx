@@ -253,15 +253,17 @@ export function FamilyDirectory({
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                    {/* Botón para agregar familiares anclados a esta persona */}
-                    <button
-                      onClick={() => setActiveAddAnchor(member)}
-                      title={`Añadir pariente respecto a ${member.firstName}`}
-                      className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-emerald-950/60 hover:bg-emerald-600 hover:text-white text-emerald-300 border border-emerald-800/50 rounded-lg transition whitespace-nowrap shrink-0"
-                    >
-                      <UserPlus className="w-3.5 h-3.5 shrink-0" />
-                      <span>Pariente</span>
-                    </button>
+                    {/* Botón para agregar familiares anclados a esta persona (Bloqueado para fichas de otros usuarios verificados) */}
+                    {(!member.isClaimed || member.relationshipCategory === "self" || (currentPerspectiveId && member.id === currentPerspectiveId)) && (
+                      <button
+                        onClick={() => setActiveAddAnchor(member)}
+                        title={`Añadir pariente respecto a ${member.firstName}`}
+                        className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-emerald-950/60 hover:bg-emerald-600 hover:text-white text-emerald-300 border border-emerald-800/50 rounded-lg transition whitespace-nowrap shrink-0"
+                      >
+                        <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                        <span>Pariente</span>
+                      </button>
+                    )}
 
                     {/* Solo se puede editar si la ficha NO ha sido reclamada */}
                     {!member.isClaimed && (
@@ -299,7 +301,9 @@ export function FamilyDirectory({
           key={activeAddAnchor.id}
           defaultAnchorId={activeAddAnchor.id}
           defaultAnchorName={formatFullName(activeAddAnchor)}
-          availableAnchors={members.map((m) => ({ id: m.id, name: formatFullName(m) }))}
+          availableAnchors={members
+            .filter((m) => !m.isClaimed || m.relationshipCategory === "self" || (currentPerspectiveId && m.id === currentPerspectiveId))
+            .map((m) => ({ id: m.id, name: formatFullName(m) }))}
           isOpen={Boolean(activeAddAnchor)}
           onClose={() => setActiveAddAnchor(null)}
         />
@@ -314,7 +318,7 @@ export function FamilyDirectory({
             name: formatFullName(m),
           }))}
           viewerParents={members
-            .filter((m) => m.relationshipCategory === "parent")
+            .filter((m) => m.relationshipCategory === "parent" && (m.relationshipLabel === "Madre" || m.relationshipLabel === "Padre" || m.relationshipLabel === "Progenitor"))
             .map((p) => ({ id: p.id, name: formatFullName(p) }))}
           isUserZero={isUserZero}
           isSelf={false}

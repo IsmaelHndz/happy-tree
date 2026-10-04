@@ -262,6 +262,16 @@ export async function getFamilyGraph(
     );
   }
 
+  // Parejas de tíos (por ejemplo la tía política / esposa del tío)
+  const uncleSpouseIds: string[] = [];
+  uncleAuntIds.forEach((uId) => {
+    const uSpouses = [
+      ...treeVisibleUnions.filter((u) => u.person_a_id === uId).map((u) => u.person_b_id),
+      ...treeVisibleUnions.filter((u) => u.person_b_id === uId).map((u) => u.person_a_id),
+    ];
+    uncleSpouseIds.push(...uSpouses);
+  });
+
   // Primos hermanos (hijos de tíos)
   let cousinIds: string[] = [];
   if (uncleAuntIds.length > 0) {
@@ -299,7 +309,7 @@ export async function getFamilyGraph(
       ...siblingIds,
     ];
   } else if (isViewerGuest && viewerTier === "intermediate") {
-    // Nivel Intermedio: Familia de casa + extendida (Abuelos, Tíos, Primos, Sobrinos, Nietos)
+    // Nivel Intermedio: Familia de casa + extendida (Abuelos, Tíos, Primos, Sobrinos, Nietos, Parejas de tíos)
     allowedNodeIds = [
       centerPersonId,
       ...parentIds,
@@ -310,6 +320,7 @@ export async function getFamilyGraph(
       ...siblingSpouseIds,
       ...grandChildIds,
       ...uncleAuntIds,
+      ...uncleSpouseIds,
       ...cousinIds,
       ...nephewNieceIds,
     ];
@@ -325,6 +336,7 @@ export async function getFamilyGraph(
       ...siblingSpouseIds,
       ...grandChildIds,
       ...uncleAuntIds,
+      ...uncleSpouseIds,
       ...cousinIds,
       ...nephewNieceIds,
     ];
@@ -421,9 +433,75 @@ export async function getFamilyGraph(
     ])
   );
 
-  // 12. Construir nodos con cálculo generacional
+  // 12. Motor Topológico de Generaciones por BFS a partir del nodo central (centerPersonId = 0)
+  const parentsOf = new Map<string, string[]>();
+  const childrenOf = new Map<string, string[]>();
+  const spousesOf = new Map<string, string[]>();
+
+  allParentEdges?.forEach((e) => {
+    const cList = childrenOf.get(e.parent_id) || [];
+    if (!cList.includes(e.child_id)) cList.push(e.child_id);
+    childrenOf.set(e.parent_id, cList);
+
+    const pList = parentsOf.get(e.child_id) || [];
+    if (!pList.includes(e.parent_id)) pList.push(e.parent_id);
+    parentsOf.set(e.child_id, pList);
+  });
+
+  treeVisibleUnions.forEach((u) => {
+    const aSpouses = spousesOf.get(u.person_a_id) || [];
+    if (!aSpouses.includes(u.person_b_id)) aSpouses.push(u.person_b_id);
+    spousesOf.set(u.person_a_id, aSpouses);
+
+    const bSpouses = spousesOf.get(u.person_b_id) || [];
+    if (!bSpouses.includes(u.person_a_id)) bSpouses.push(u.person_a_id);
+    spousesOf.set(u.person_b_id, bSpouses);
+  });
+
+  const genMap = new Map<string, number>();
+  genMap.set(centerPersonId, 0);
+
+  const bfsQueue: string[] = [centerPersonId];
+  const visited = new Set<string>([centerPersonId]);
+
+  while (bfsQueue.length > 0) {
+    const currId = bfsQueue.shift()!;
+    const currGen = genMap.get(currId) ?? 0;
+
+    // Progenitores (un nivel arriba: -1)
+    const pList = parentsOf.get(currId) || [];
+    pList.forEach((pId) => {
+      if (!visited.has(pId)) {
+        visited.add(pId);
+        genMap.set(pId, currGen - 1);
+        bfsQueue.push(pId);
+      }
+    });
+
+    // Hijos (un nivel abajo: +1)
+    const cList = childrenOf.get(currId) || [];
+    cList.forEach((cId) => {
+      if (!visited.has(cId)) {
+        visited.add(cId);
+        genMap.set(cId, currGen + 1);
+        bfsQueue.push(cId);
+      }
+    });
+
+    // Parejas / Cónyuges (mismo nivel generacional: 0)
+    const sList = spousesOf.get(currId) || [];
+    sList.forEach((sId) => {
+      if (!visited.has(sId)) {
+        visited.add(sId);
+        genMap.set(sId, currGen);
+        bfsQueue.push(sId);
+      }
+    });
+  }
+
+  // 13. Construir nodos con cálculo generacional exacto y afinidades
   const rawNodes: TreeNodeData[] = persons.map((p) => {
-    let generation = 0;
+    const generation = genMap.get(p.id) ?? 0;
 
     const matchedUnion = allUnions?.find(
       (u) =>
@@ -460,21 +538,17 @@ export async function getFamilyGraph(
     let relationshipExplanation = kinship.explanation;
 
     if (p.id === centerPersonId) {
-      generation = 0;
       relationshipLabel = isViewerGuest ? "Persona Foco" : (centerPersonId === userPersonId ? "Tú" : "Persona Central");
       relationshipCategory = "self";
       relationshipExplanation = isViewerGuest ? `Árbol de ${treeOwnerName || "Amigo"}` : "Foco principal del árbol";
-    } else if (grandParentIds.includes(p.id)) {
-      generation = -2;
-      relationshipCategory = "parent";
     } else if (parentIds.includes(p.id)) {
-      generation = -1;
       relationshipCategory = "parent";
+    } else if (grandParentIds.includes(p.id)) {
+      // Abuelos no deben ser considerados 'parent' inmediato para no contaminar filtros de padres del usuario
+      relationshipCategory = "other";
     } else if (childIds.includes(p.id)) {
-      generation = 1;
       relationshipCategory = "child";
     } else if (spouseIds.includes(p.id)) {
-      generation = 0;
       relationshipCategory = "spouse";
       if (matchedUnion?.union_type === "divorced") {
         relationshipLabel = "Ex-pareja (Divorciados)";
@@ -486,15 +560,19 @@ export async function getFamilyGraph(
         relationshipLabel = "Cónyuge / Pareja";
       }
     } else if (siblingIds.includes(p.id)) {
-      generation = 0;
       relationshipCategory = "sibling";
     } else if (siblingSpouseIds.includes(p.id)) {
-      generation = 0;
       relationshipLabel = p.gender === "female" ? "Cuñada" : "Cuñado";
       relationshipCategory = "spouse";
       relationshipExplanation = "Pareja de hermano/a";
-    } else {
-      generation = 0;
+    } else if (uncleAuntIds.includes(p.id)) {
+      relationshipCategory = "other";
+    } else if (uncleSpouseIds.includes(p.id)) {
+      relationshipLabel = p.gender === "female" ? "Tía política" : "Tío político";
+      relationshipCategory = "other";
+      relationshipExplanation = "Pareja de tío/a";
+    } else if (nephewNieceIds.includes(p.id)) {
+      relationshipCategory = "other";
     }
 
     const token = tokens?.find((t) => t.person_id === p.id);
@@ -541,7 +619,7 @@ export async function getFamilyGraph(
     };
   });
 
-  // 13. Construir las aristas relevantes
+  // 14. Construir las aristas relevantes
   const edges: TreeEdgeData[] = [];
 
   allParentEdges?.forEach((e) => {
@@ -603,36 +681,57 @@ export async function getFamilyGraph(
     }
   });
 
-  // 14. Cálculo de Posiciones (Layout generacional centrado)
+  // 15. Cálculo de Posiciones Dinámicas por Generación
   const NODE_WIDTH = 220;
   const NODE_HEIGHT = 130;
   const GAP_X = 50;
   const GAP_Y = 150;
 
-  const generations = [-2, -1, 0, 1];
+  const allGens = Array.from(new Set(rawNodes.map((n) => n.generation))).sort((a, b) => a - b);
+  const minGen = Math.min(...allGens, 0);
   const positionedNodes: TreeNodeData[] = [];
 
-  generations.forEach((gen) => {
+  allGens.forEach((gen) => {
     const genNodes = rawNodes.filter((n) => n.generation === gen);
     const count = genNodes.length;
     if (count === 0) return;
 
-    if (gen === 0) {
-      genNodes.sort((a, b) => {
+    // Ordenamiento inteligente en cada fila para asegurar cohesión visual:
+    genNodes.sort((a, b) => {
+      if (gen === 0) {
         const getRank = (n: typeof rawNodes[0]) => {
-          if (n.relationshipCategory === "spouse" && spouseIds.includes(n.id)) return 1;
-          if (n.relationshipCategory === "self") return 2;
-          if (n.relationshipCategory === "sibling") return 3;
-          if (n.relationshipCategory === "spouse" && siblingSpouseIds.includes(n.id)) return 4;
+          if (spouseIds.includes(n.id)) return 1;
+          if (n.id === centerPersonId) return 2;
+          if (siblingIds.includes(n.id)) return 3;
+          if (siblingSpouseIds.includes(n.id)) return 4;
           return 5;
         };
         return getRank(a) - getRank(b);
-      });
-    }
+      } else if (gen < 0) {
+        // Padres directos al centro/frente, luego tíos y sus parejas
+        const getRank = (n: typeof rawNodes[0]) => {
+          if (parentIds.includes(n.id)) return 1;
+          if (grandParentIds.includes(n.id)) return 2;
+          if (uncleAuntIds.includes(n.id)) return 3;
+          if (uncleSpouseIds.includes(n.id)) return 4;
+          return 5;
+        };
+        return getRank(a) - getRank(b);
+      } else {
+        // Hijos directos primero, luego sobrinos o nietos
+        const getRank = (n: typeof rawNodes[0]) => {
+          if (childIds.includes(n.id)) return 1;
+          if (nephewNieceIds.includes(n.id)) return 2;
+          if (grandChildIds.includes(n.id)) return 3;
+          return 4;
+        };
+        return getRank(a) - getRank(b);
+      }
+    });
 
     const totalWidth = count * NODE_WIDTH + (count - 1) * GAP_X;
     const startX = -totalWidth / 2;
-    const y = (gen + 1) * (NODE_HEIGHT + GAP_Y);
+    const y = (gen - minGen) * (NODE_HEIGHT + GAP_Y);
 
     genNodes.forEach((node, index) => {
       const x = startX + index * (NODE_WIDTH + GAP_X);

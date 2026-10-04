@@ -255,9 +255,25 @@ export async function createFamilyMemberAction(formData: FormData) {
     return { error: "No tienes una ficha genealógica activa." };
   }
 
-  // Familiar de Referencia (Anchor): permite al Usuario Cero construir ramas para mamá, hermanos, etc.
+  // Familiar de Referencia (Anchor): permite al usuario construir ramas familiares
   const requestedAnchorId = (formData.get("anchor_person_id") as string)?.trim();
   const currentPersonId = requestedAnchorId || profile.person_id;
+
+  // REGLA ESTRICTA DE PRIVACIDAD Y SEGURIDAD:
+  // Si se solicita anclar a un perfil distinto al del usuario actual, verificar que no sea una ficha reclamada por otro usuario.
+  if (requestedAnchorId && requestedAnchorId !== profile.person_id) {
+    const { data: anchorPerson } = await supabase
+      .from("persons")
+      .select("id, is_claimed, first_name, last_name")
+      .eq("id", requestedAnchorId)
+      .maybeSingle();
+
+    if (anchorPerson?.is_claimed) {
+      return {
+        error: `No tienes autorización para agregar familiares al perfil verificado de ${anchorPerson.first_name} ${anchorPerson.last_name}. Solo el propio titular puede agregar parientes respecto a su ficha personal.`,
+      };
+    }
+  }
 
   const firstName = (formData.get("first_name") as string)?.trim();
   const middleName = (formData.get("middle_name") as string)?.trim() || null;

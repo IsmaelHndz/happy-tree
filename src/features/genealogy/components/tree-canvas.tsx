@@ -167,10 +167,17 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
     parentGroupToChildrenMap.set(parentKey, cList);
   });
 
-  const availableAnchors = graph.availableMembers.map((m) => ({
-    id: m.id,
-    name: formatFullName(m),
-  }));
+  const availableAnchors = graph.availableMembers
+    .filter((m) => {
+      const node = nodeMap.get(m.id);
+      if (!node) return true;
+      const isSelfNode = node.id === graph.focusPerson.id || node.relationshipCategory === "self";
+      return !node.isClaimed || isSelfNode;
+    })
+    .map((m) => ({
+      id: m.id,
+      name: formatFullName(m),
+    }));
 
   return (
     <div
@@ -315,30 +322,74 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
             }
 
             const firstChild = children[0];
-            const busY = parentMaxY + (firstChild.y! - parentMaxY) / 2;
+            const busY =
+              firstChild.y! > parentMaxY
+                ? parentMaxY + (firstChild.y! - parentMaxY) / 2
+                : parentMaxY + 30;
 
-            if (children.length === 1) {
-              // Hijo único: conexión vertical directa
-              const childX = firstChild.x! + NODE_WIDTH / 2;
-              const childY = firstChild.y!;
-              return (
-                <path
-                  key={`pc-single-${parentKey}`}
-                  d={`M ${parentMidX} ${parentMaxY} C ${parentMidX} ${busY}, ${childX} ${busY}, ${childX} ${childY}`}
-                  fill="none"
-                  stroke="#10b981"
-                  strokeOpacity="0.85"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                />
-              );
-            }
-
-            // Dos o más hijos (HERMANOS): Horquilla clásica con bus bar horizontal
             const childXs = children.map((c) => c.x! + NODE_WIDTH / 2);
             const minChildX = Math.min(...childXs);
             const maxChildX = Math.max(...childXs);
+            const busStartX = Math.min(minChildX, parentMidX);
+            const busEndX = Math.max(maxChildX, parentMidX);
 
+            if (children.length === 1) {
+              const childX = firstChild.x! + NODE_WIDTH / 2;
+              const childY = firstChild.y!;
+
+              if (Math.abs(parentMidX - childX) < 2) {
+                // Perfectamente alineados: línea recta vertical continua
+                return (
+                  <line
+                    key={`pc-single-${parentKey}`}
+                    x1={parentMidX}
+                    y1={parentMaxY}
+                    x2={childX}
+                    y2={childY}
+                    stroke="#10b981"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  />
+                );
+              }
+
+              // Conexión ortogonal limpia e ininterrumpida
+              return (
+                <g key={`pc-single-${parentKey}`}>
+                  <line
+                    x1={parentMidX}
+                    y1={parentMaxY}
+                    x2={parentMidX}
+                    y2={busY}
+                    stroke="#10b981"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  />
+                  <circle cx={parentMidX} cy={busY} r="3" fill="#10b981" />
+                  <line
+                    x1={busStartX}
+                    y1={busY}
+                    x2={busEndX}
+                    y2={busY}
+                    stroke="#10b981"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={childX}
+                    y1={busY}
+                    x2={childX}
+                    y2={childY}
+                    stroke="#10b981"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  />
+                  <circle cx={childX} cy={busY} r="2.5" fill="#10b981" />
+                </g>
+              );
+            }
+
+            // Dos o más hijos (HERMANOS): Horquilla clásica con bus bar horizontal continuo
             return (
               <g key={`pc-group-${parentKey}`}>
                 {/* Bajada vertical desde los padres hacia la barra de hermanos */}
@@ -353,11 +404,11 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                 />
                 <circle cx={parentMidX} cy={busY} r="3" fill="#10b981" />
 
-                {/* Barra horizontal que agrupa y conecta a todos los hermanos */}
+                {/* Barra horizontal continua que abarca el punto de bajada de los padres y a todos los hermanos */}
                 <line
-                  x1={minChildX}
+                  x1={busStartX}
                   y1={busY}
-                  x2={maxChildX}
+                  x2={busEndX}
                   y2={busY}
                   stroke="#10b981"
                   strokeWidth="2.5"
@@ -546,19 +597,23 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                       Centro
                     </span>
                   )}
-                  {/* Botón rápido para agregar pariente anclado a este nodo */}
-                  {!graph.isViewerGuest && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActiveAddAnchor(node);
-                      }}
-                      title={`Añadir pariente anclado a ${node.firstName}`}
-                      className="p-1 text-neutral-400 hover:text-emerald-400 hover:bg-neutral-800 rounded-lg transition"
-                    >
-                      <UserPlus className="w-3 h-3" />
-                    </button>
-                  )}
+                  {/* Botón rápido para agregar pariente anclado a este nodo (Bloqueado para fichas de otros usuarios verificados) */}
+                  {!graph.isViewerGuest && (() => {
+                    const isSelfNode = node.id === graph.focusPerson.id || node.relationshipCategory === "self";
+                    if (node.isClaimed && !isSelfNode) return null;
+                    return (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveAddAnchor(node);
+                        }}
+                        title={`Añadir pariente anclado a ${node.firstName}`}
+                        className="p-1 text-neutral-400 hover:text-emerald-400 hover:bg-neutral-800 rounded-lg transition"
+                      >
+                        <UserPlus className="w-3 h-3" />
+                      </button>
+                    );
+                  })()}
 
                   {/* Solo se puede editar si es su propia ficha personal (isSelf) O si es una ficha no reclamada */}
                   {(() => {

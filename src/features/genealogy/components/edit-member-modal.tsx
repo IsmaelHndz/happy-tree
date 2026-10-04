@@ -46,6 +46,7 @@ export interface EditableMemberData {
   bio?: string | null;
   isClaimed: boolean;
   relationshipLabel?: string;
+  relationshipCategory?: "parent" | "child" | "spouse" | "sibling" | "other" | "self";
   relationshipExplanation?: string;
   accountEmail?: string | null;
   parentConnections?: {
@@ -99,6 +100,7 @@ export function EditMemberModal({
     member.unionInfo?.unionType || "married"
   );
   const [isUpdatingUnion, setIsUpdatingUnion] = useState(false);
+  const [confirmUpdateUnion, setConfirmUpdateUnion] = useState(false);
   const [isDissolvingUnion, setIsDissolvingUnion] = useState(false);
   const [confirmDissolve, setConfirmDissolve] = useState(false);
   const [unionSuccessMessage, setUnionSuccessMessage] = useState<string | null>(null);
@@ -219,6 +221,7 @@ export function EditMemberModal({
     });
 
     setIsUpdatingUnion(false);
+    setConfirmUpdateUnion(false);
     if (res.error) {
       setError(res.error);
     } else {
@@ -475,10 +478,10 @@ export function EditMemberModal({
             </span>
           </div>
 
-          {/* Asistente Rápido: Vincular como Hermano/a compartiendo progenitores */}
-          {!isClaimedOther && viewerParents && viewerParents.length > 0 && (
+          {/* Asistente Rápido: Vincular como Hermano/a compartiendo progenitores (Solo para miembros sin pareja ni padres registrados) */}
+          {!isClaimedOther && !isSelf && viewerParents && viewerParents.length > 0 && (
             <div>
-              {viewerParents.every((vp) => parentIds.includes(vp.id)) ? (
+              {viewerParents.every((vp) => parentIds.includes(vp.id)) && parentIds.length > 0 && !member.unionInfo ? (
                 <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-800/50 flex items-center gap-2.5 text-xs text-emerald-200">
                   <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
                   <div>
@@ -487,28 +490,35 @@ export function EditMemberModal({
                   </div>
                 </div>
               ) : (
-                <div className="p-3.5 rounded-2xl bg-teal-950/40 border border-teal-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
-                  <div className="flex items-center gap-2.5">
-                    <Sparkles className="w-4 h-4 text-teal-400 shrink-0" />
-                    <div>
-                      <p className="text-xs font-semibold text-teal-200">
-                        ¿Es tu hermano o hermana?
-                      </p>
-                      <p className="text-[11px] text-teal-300/80">
-                        Asignar a tus mismos padres ({viewerParents.map((p) => p.name).join(" y ")}) para que el árbol lo reconozca como Hermano/a.
-                      </p>
+                !member.unionInfo &&
+                member.relationshipCategory !== "spouse" &&
+                member.relationshipCategory !== "parent" &&
+                member.relationshipCategory !== "child" &&
+                parentIds.length === 0 &&
+                viewerParents.length <= 2 && (
+                  <div className="p-3.5 rounded-2xl bg-teal-950/40 border border-teal-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+                    <div className="flex items-center gap-2.5">
+                      <Sparkles className="w-4 h-4 text-teal-400 shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold text-teal-200">
+                          ¿Es tu hermano o hermana?
+                        </p>
+                        <p className="text-[11px] text-teal-300/80">
+                          Asignar a tus mismos padres ({viewerParents.map((p) => p.name).join(" y ")}) para que el árbol lo reconozca como Hermano/a.
+                        </p>
+                      </div>
                     </div>
+                    <button
+                      type="button"
+                      disabled={isUpdatingParents}
+                      onClick={handleAssignViewerParents}
+                      className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shrink-0 transition shadow-sm flex items-center justify-center gap-1.5"
+                    >
+                      {isUpdatingParents ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitFork className="w-3.5 h-3.5" />}
+                      <span>Vincular como Hermano/a</span>
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    disabled={isUpdatingParents}
-                    onClick={handleAssignViewerParents}
-                    className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shrink-0 transition shadow-sm flex items-center justify-center gap-1.5"
-                  >
-                    {isUpdatingParents ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitFork className="w-3.5 h-3.5" />}
-                    <span>Vincular como Hermano/a</span>
-                  </button>
-                </div>
+                )
               )}
             </div>
           )}
@@ -650,50 +660,122 @@ export function EditMemberModal({
         )}
 
         {/* SECCIÓN ESPECIAL: GESTIÓN DE VÍNCULO CONYUGAL (SI TIENE UNIÓN) */}
-        {member.unionInfo && (
-          <div className="mb-6 p-4 rounded-2xl bg-neutral-950/80 border border-pink-900/40 space-y-3">
-            <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-pink-300">
-                <Heart className="w-4 h-4 text-pink-400" />
-                <span>Gestión de Vínculo de Pareja</span>
-              </div>
-              <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-pink-950/60 border border-pink-800/50 text-pink-300">
-                {member.unionInfo.unionType}
-              </span>
-            </div>
+        {member.unionInfo && (() => {
+          const partnerName =
+            availableFamilyMembers?.find((m) => m.id === member.unionInfo?.partnerId)?.name ||
+            "Pareja Registrada";
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
-              <div>
-                <label className="block text-[11px] font-medium text-neutral-300 mb-1">
+          const getUnionLabel = (uType: string) => {
+            switch (uType) {
+              case "married":
+                return "Casados";
+              case "partner":
+                return "Pareja (Unión Libre)";
+              case "separated":
+                return "Separados";
+              case "divorced":
+                return "Divorciados";
+              default:
+                return uType;
+            }
+          };
+
+          return (
+            <div className="mb-6 p-4 rounded-2xl bg-neutral-950/80 border border-pink-900/40 space-y-3.5">
+              <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
+                <div className="flex items-center gap-2 text-xs font-bold text-pink-300">
+                  <Heart className="w-4 h-4 text-pink-400" />
+                  <span>Gestión de Vínculo de Pareja</span>
+                </div>
+                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-pink-950/60 border border-pink-800/50 text-pink-300">
+                  {member.unionInfo.unionType}
+                </span>
+              </div>
+
+              {/* Ficha destacada con el nombre de la pareja */}
+              <div className="p-3 rounded-2xl bg-neutral-900/90 border border-neutral-800 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-pink-500/10 border border-pink-500/20 text-pink-400 flex items-center justify-center shrink-0">
+                    <Heart className="w-4 h-4 fill-pink-500/20" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] text-neutral-400 block">Vínculo conyugal registrado con:</span>
+                    <span className="text-xs font-bold text-white">{partnerName}</span>
+                  </div>
+                </div>
+                <span className="text-[11px] font-medium px-2.5 py-1 rounded-lg bg-pink-950/80 border border-pink-800/60 text-pink-300">
+                  {getUnionLabel(member.unionInfo.unionType)}
+                </span>
+              </div>
+
+              {/* Selector de estado de relación y confirmación de cambios */}
+              <div className="space-y-2.5 pt-1">
+                <label className="block text-[11px] font-medium text-neutral-300">
                   Estado de la Relación
                 </label>
-                <select
-                  value={unionType}
-                  onChange={(e) =>
-                    setUnionType(e.target.value as "married" | "civil_union" | "divorced" | "separated" | "partner")
-                  }
-                  className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-700 text-white text-xs focus:outline-none focus:border-pink-500 transition"
-                >
-                  <option value="married">Casados</option>
-                  <option value="partner">Pareja / Unión Libre</option>
-                  <option value="separated">Separados</option>
-                  <option value="divorced">Divorciados</option>
-                </select>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
+                  <select
+                    value={unionType}
+                    onChange={(e) => {
+                      setUnionType(e.target.value as "married" | "civil_union" | "divorced" | "separated" | "partner");
+                      setConfirmUpdateUnion(false);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-700 text-white text-xs focus:outline-none focus:border-pink-500 transition"
+                  >
+                    <option value="married">Casados</option>
+                    <option value="partner">Pareja / Unión Libre</option>
+                    <option value="separated">Separados</option>
+                    <option value="divorced">Divorciados</option>
+                  </select>
+
+                  {!confirmUpdateUnion && (
+                    <button
+                      type="button"
+                      disabled={isUpdatingUnion || unionType === member.unionInfo.unionType}
+                      onClick={() => setConfirmUpdateUnion(true)}
+                      className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold transition disabled:opacity-40 flex items-center justify-center gap-1.5"
+                    >
+                      <span>Cambiar Estado</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Diálogo de Confirmación antes de actualizar el estado conyugal */}
+                {confirmUpdateUnion && unionType !== member.unionInfo.unionType && (
+                  <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 space-y-2 animate-in fade-in">
+                    <p className="text-xs text-amber-200">
+                      ¿Confirmas que deseas cambiar la relación con <strong className="text-white">{partnerName}</strong> de{" "}
+                      <span className="underline">{getUnionLabel(member.unionInfo.unionType)}</span> a{" "}
+                      <strong className="text-emerald-400">{getUnionLabel(unionType)}</strong>?
+                    </p>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={isUpdatingUnion}
+                        onClick={handleUpdateUnionStatus}
+                        className="px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
+                      >
+                        {isUpdatingUnion && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        <span>Confirmar Cambio</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isUpdatingUnion}
+                        onClick={() => {
+                          setUnionType(member.unionInfo!.unionType);
+                          setConfirmUpdateUnion(false);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <button
-                type="button"
-                disabled={isUpdatingUnion || unionType === member.unionInfo.unionType}
-                onClick={handleUpdateUnionStatus}
-                className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold transition disabled:opacity-40 flex items-center justify-center gap-1.5"
-              >
-                {isUpdatingUnion && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                <span>Actualizar Estado</span>
-              </button>
-            </div>
-
-            {/* Disolver / Desvincular Pareja */}
-            <div className="pt-2 border-t border-neutral-900 flex flex-col gap-2">
+              {/* Disolver / Desvincular Pareja */}
+              <div className="pt-2 border-t border-neutral-900 flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-neutral-400">
                   ¿Ya no son pareja?
@@ -758,7 +840,8 @@ export function EditMemberModal({
               )}
             </div>
           </div>
-        )}
+        );
+      })()}
 
         {isClaimedOther ? (
           <div className="p-4 rounded-2xl bg-neutral-950/70 border border-neutral-800 space-y-3">
