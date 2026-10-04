@@ -8,6 +8,7 @@ import {
   Check,
   Share2,
   Mail,
+  Phone,
   AlertCircle,
   Loader2,
   X,
@@ -34,6 +35,7 @@ export function InviteModal({
   onClose,
 }: InviteModalProps) {
   const [email, setEmail] = useState(existingEmail || "");
+  const [phone, setPhone] = useState("");
   const [token, setToken] = useState<string | null>(existingToken || null);
   const [copied, setCopied] = useState(false);
   const [isPending, setIsPending] = useState(false);
@@ -71,9 +73,13 @@ export function InviteModal({
     setTimeout(() => setCopied(false), 2500);
   };
 
+  const cleanPhone = phone.replace(/[^0-9]/g, "");
   const whatsappMessage = encodeURIComponent(
-    `¡Hola ${personName}! Te invito a reclamar tu perfil familiar en Happy Tree como mi ${relationshipLabel}. Accede mediante tu enlace único seguro:\n${inviteUrl}`
+    `¡Hola ${personName}! Te invito a unirte a Happy Tree y reclamar tu perfil familiar como mi ${relationshipLabel}. Accede mediante tu enlace único seguro para ver y construir nuestro árbol genealógico:\n${inviteUrl}`
   );
+  const whatsappUrl = cleanPhone
+    ? `https://wa.me/${cleanPhone}?text=${whatsappMessage}`
+    : `https://api.whatsapp.com/send?text=${whatsappMessage}`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
@@ -169,6 +175,22 @@ export function InviteModal({
               </div>
             </div>
 
+            <div>
+              <label className="block text-xs font-medium text-neutral-400 mb-1.5">
+                Número de Teléfono (opcional para abrir su chat directo)
+              </label>
+              <div className="relative">
+                <Phone className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-2.5" />
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="Ej. +52 1 55 1234 5678"
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2 pl-9 pr-3 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition font-mono"
+                />
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-2 pt-1">
               <button
                 onClick={handleCopy}
@@ -188,13 +210,13 @@ export function InviteModal({
               </button>
 
               <a
-                href={`https://api.whatsapp.com/send?text=${whatsappMessage}`}
+                href={whatsappUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition"
               >
                 <Share2 className="w-3.5 h-3.5" />
-                <span>WhatsApp</span>
+                <span>{cleanPhone ? "Abrir Chat" : "WhatsApp"}</span>
               </a>
             </div>
 
