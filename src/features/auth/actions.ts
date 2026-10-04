@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import type { AuthActionState, InvitationDetails, UserZeroStatus } from "./types";
 import type { Gender } from "@/types/database.types";
 
@@ -60,6 +61,7 @@ export async function loginAction(
     };
   }
 
+  revalidatePath("/", "layout");
   redirect("/");
 }
 
@@ -123,6 +125,7 @@ export async function bootstrapUserZeroAction(
     return { error: `Error inicializando perfil raíz: ${rpcError.message}` };
   }
 
+  revalidatePath("/", "layout");
   redirect("/");
 }
 
@@ -251,5 +254,6 @@ export async function claimProfileWithTokenAction(
     return { error: `Error al reclamar el perfil: ${rpcError.message}` };
   }
 
+  revalidatePath("/", "layout");
   redirect("/");
 }

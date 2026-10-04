@@ -1,11 +1,22 @@
+import { createClient } from "@/lib/supabase/server";
 import { checkUserZeroExists } from "@/features/auth/actions";
 import { LoginForm } from "./login-form";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Shield, Sparkles, ArrowRight } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user) {
+    redirect("/");
+  }
+
   const { exists } = await checkUserZeroExists();
 
   return (

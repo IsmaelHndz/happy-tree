@@ -96,12 +96,50 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
   if (allFamilyIds.length === 0) return [];
 
   // 5. Consultar los datos de las personas
-  const { data: persons } = await supabase
+  type PersonQueryResult = {
+    id: string;
+    first_name: string;
+    middle_name?: string | null;
+    last_name: string;
+    maternal_last_name?: string | null;
+    maiden_name: string | null;
+    gender: Gender;
+    birth_date: string | null;
+    death_date: string | null;
+    is_living: boolean;
+    birth_place: string | null;
+    bio: string | null;
+    is_claimed: boolean;
+    created_by_user_id: string | null;
+  };
+
+  let persons: PersonQueryResult[] | null = null;
+
+  const { data: personsWithNewCols, error: personsError } = await supabase
     .from("persons")
     .select("id, first_name, middle_name, last_name, maternal_last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
     .in("id", allFamilyIds);
 
-  if (!persons) return [];
+  if (personsError || !personsWithNewCols) {
+    const { data: fallbackPersons } = await supabase
+      .from("persons")
+      .select("id, first_name, last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
+      .in("id", allFamilyIds);
+
+    persons = (fallbackPersons || []).map((p) => ({
+      ...p,
+      middle_name: null,
+      maternal_last_name: null,
+      gender: p.gender as Gender,
+    }));
+  } else {
+    persons = (personsWithNewCols || []).map((p) => ({
+      ...p,
+      gender: p.gender as Gender,
+    }));
+  }
+
+  if (!persons || persons.length === 0) return [];
 
   // 6. Consultar tokens de invitación activos
   const { data: tokens } = await supabase
@@ -233,7 +271,10 @@ export async function createFamilyMemberAction(formData: FormData) {
   }
 
   // 1. Crear el nuevo nodo en persons (is_claimed = false)
-  const { data: newPerson, error: personError } = await supabase
+  let newPerson: { id: string } | null = null;
+  let personError: { message: string } | null = null;
+
+  const insertWithNewFields = await supabase
     .from("persons")
     .insert({
       first_name: firstName,
@@ -248,6 +289,28 @@ export async function createFamilyMemberAction(formData: FormData) {
     })
     .select("id")
     .single();
+
+  if (insertWithNewFields.error) {
+    // Reintentar sin columnas nuevas si la migración aún no se ejecuta en la BD
+    const fallbackInsert = await supabase
+      .from("persons")
+      .insert({
+        first_name: firstName,
+        last_name: lastName,
+        gender,
+        birth_date: birthDate,
+        is_living: isLiving,
+        is_claimed: false,
+        created_by_user_id: user.id,
+      })
+      .select("id")
+      .single();
+
+    newPerson = fallbackInsert.data;
+    personError = fallbackInsert.error;
+  } else {
+    newPerson = insertWithNewFields.data;
+  }
 
   if (personError || !newPerson) {
     return { error: `Error creando ficha familiar: ${personError?.message}` };
@@ -360,11 +423,23 @@ export async function createFamilyMemberAction(formData: FormData) {
     } else {
       // Si la persona de referencia no tiene padres registrados aún:
       // Creamos un nodo de linaje/progenitor común para que ambos hermanos queden conectados en el árbol
-      const { data: anchorPerson } = await supabase
+      let anchorPerson: { first_name: string; last_name: string; maternal_last_name?: string | null } | null = null;
+      const { data: anchorData, error: anchorErr } = await supabase
         .from("persons")
         .select("first_name, last_name, maternal_last_name")
         .eq("id", currentPersonId)
-        .single();
+        .maybeSingle();
+
+      if (anchorErr || !anchorData) {
+        const { data: fallbackAnchor } = await supabase
+          .from("persons")
+          .select("first_name, last_name")
+          .eq("id", currentPersonId)
+          .maybeSingle();
+        anchorPerson = fallbackAnchor;
+      } else {
+        anchorPerson = anchorData;
+      }
 
       const lineageLastName = anchorPerson?.last_name || lastName || "Linaje Familiar";
       const { data: sharedParent } = await supabase
@@ -523,7 +598,26 @@ export async function updateFamilyMemberAction(formData: FormData) {
     .eq("id", personId);
 
   if (updateError) {
-    return { error: `Error al actualizar la ficha: ${updateError.message}` };
+    // Si falló por falta de columnas nuevas en la base de datos, reintentar con las columnas estándar
+    const { error: fallbackError } = await supabase
+      .from("persons")
+      .update({
+        first_name: firstName,
+        last_name: lastName,
+        maiden_name: maidenName,
+        gender,
+        birth_date: birthDate,
+        death_date: deathDate,
+        is_living: isLiving,
+        birth_place: birthPlace,
+        bio,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", personId);
+
+    if (fallbackError) {
+      return { error: `Error al actualizar la ficha: ${fallbackError.message}` };
+    }
   }
 
   revalidatePath("/");

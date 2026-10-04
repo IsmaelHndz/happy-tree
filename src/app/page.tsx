@@ -38,50 +38,70 @@ export default async function Home() {
   let availableAnchors: { id: string; name: string }[] = [];
 
   if (user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id, is_user_zero, person_id, persons:person_id (first_name, middle_name, last_name, maternal_last_name)")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profile) {
-      const personData = profile.persons as unknown as {
+    interface ProfileQueryResult {
+      id: string;
+      is_user_zero: boolean;
+      person_id: string | null;
+      persons: {
         first_name: string;
         middle_name?: string | null;
         last_name: string;
         maternal_last_name?: string | null;
       } | null;
-      const personName = personData
-        ? formatFullName({
-            firstName: personData.first_name,
-            middleName: personData.middle_name,
-            lastName: personData.last_name,
-            maternalLastName: personData.maternal_last_name,
-          })
-        : user.email || "Miembro";
-
-      const { data: canInviteData } = await supabase.rpc("check_user_can_invite", {
-        p_user_id: user.id,
-      });
-
-      const inviteResult = canInviteData as { can_invite?: boolean; endorsements?: number } | null;
-
-      userProfile = {
-        personName,
-        isUserZero: profile.is_user_zero,
-        endorsementsCount: inviteResult?.endorsements ?? 0,
-        canInvite: inviteResult?.can_invite ?? profile.is_user_zero,
-      };
-
-      familyMembers = await getFamilyMembers();
-
-      availableAnchors = profile.person_id
-        ? [
-            { id: profile.person_id, name: `Tú (${personName})` },
-            ...familyMembers.map((m) => ({ id: m.id, name: formatFullName(m) })),
-          ]
-        : [];
     }
+
+    let profile: ProfileQueryResult | null = null;
+
+    const { data: profileWithNewFields, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, is_user_zero, person_id, persons:person_id (first_name, middle_name, last_name, maternal_last_name)")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError || !profileWithNewFields) {
+      // Fallback seguro si la migración de nuevas columnas aún no se ejecuta en Supabase
+      const { data: fallbackProfile } = await supabase
+        .from("profiles")
+        .select("id, is_user_zero, person_id, persons:person_id (first_name, last_name)")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      profile = fallbackProfile as unknown as ProfileQueryResult | null;
+    } else {
+      profile = profileWithNewFields as unknown as ProfileQueryResult | null;
+    }
+
+    const personData = profile?.persons;
+    const personName = personData?.first_name
+      ? formatFullName({
+          firstName: personData.first_name,
+          middleName: personData.middle_name,
+          lastName: personData.last_name || "",
+          maternalLastName: personData.maternal_last_name,
+        })
+      : user.email || "Miembro";
+
+    const { data: canInviteData } = await supabase.rpc("check_user_can_invite", {
+      p_user_id: user.id,
+    });
+
+    const inviteResult = canInviteData as { can_invite?: boolean; endorsements?: number } | null;
+
+    userProfile = {
+      personName,
+      isUserZero: profile?.is_user_zero ?? false,
+      endorsementsCount: inviteResult?.endorsements ?? 0,
+      canInvite: inviteResult?.can_invite ?? (profile?.is_user_zero ?? false),
+    };
+
+    familyMembers = await getFamilyMembers();
+
+    availableAnchors = profile?.person_id
+      ? [
+          { id: profile.person_id, name: `Tú (${personName})` },
+          ...familyMembers.map((m) => ({ id: m.id, name: formatFullName(m) })),
+        ]
+      : [];
   }
 
   return (

@@ -151,12 +151,50 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
   );
 
   // 7. Consultar los datos de todas las personas en el grafo
-  const { data: persons } = await supabase
+  type PersonQueryResult = {
+    id: string;
+    first_name: string;
+    middle_name?: string | null;
+    last_name: string;
+    maternal_last_name?: string | null;
+    maiden_name: string | null;
+    gender: Gender;
+    birth_date: string | null;
+    death_date: string | null;
+    is_living: boolean;
+    birth_place: string | null;
+    bio: string | null;
+    is_claimed: boolean;
+    created_by_user_id: string | null;
+  };
+
+  let persons: PersonQueryResult[] | null = null;
+
+  const { data: personsWithNewCols, error: personsError } = await supabase
     .from("persons")
     .select("id, first_name, middle_name, last_name, maternal_last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
     .in("id", nodeIds);
 
-  if (!persons) return emptyResult;
+  if (personsError || !personsWithNewCols) {
+    const { data: fallbackPersons } = await supabase
+      .from("persons")
+      .select("id, first_name, last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
+      .in("id", nodeIds);
+
+    persons = (fallbackPersons || []).map((p) => ({
+      ...p,
+      middle_name: null,
+      maternal_last_name: null,
+      gender: p.gender as Gender,
+    }));
+  } else {
+    persons = (personsWithNewCols || []).map((p) => ({
+      ...p,
+      gender: p.gender as Gender,
+    }));
+  }
+
+  if (!persons || persons.length === 0) return emptyResult;
 
   // 8. Consultar tokens de invitación activos
   const { data: tokens } = await supabase
