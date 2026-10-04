@@ -153,7 +153,7 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
   // 7. Consultar los datos de todas las personas en el grafo
   const { data: persons } = await supabase
     .from("persons")
-    .select("id, first_name, last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
+    .select("id, first_name, middle_name, last_name, maternal_last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
     .in("id", nodeIds);
 
   if (!persons) return emptyResult;
@@ -179,13 +179,15 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
   const quorumThreshold = Math.min(3, Math.max(1, activeUsersCount ?? 1));
 
   // Mapa de personas para inferencia genealógica inteligente
-  const personsMap = new Map<string, { id: string; firstName: string; lastName: string; gender: Gender }>(
+  const personsMap = new Map<string, { id: string; firstName: string; middleName?: string | null; lastName: string; maternalLastName?: string | null; gender: Gender }>(
     persons.map((p) => [
       p.id,
       {
         id: p.id,
         firstName: p.first_name,
+        middleName: p.middle_name,
         lastName: p.last_name,
+        maternalLastName: p.maternal_last_name,
         gender: p.gender as Gender,
       },
     ])
@@ -287,7 +289,9 @@ export async function getFamilyGraph(focusPersonId?: string): Promise<FamilyGrap
     return {
       id: p.id,
       firstName: p.first_name,
+      middleName: p.middle_name,
       lastName: p.last_name,
+      maternalLastName: p.maternal_last_name,
       maidenName: p.maiden_name,
       gender: p.gender as Gender,
       birthDate: p.birth_date,

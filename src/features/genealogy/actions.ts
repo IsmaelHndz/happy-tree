@@ -98,7 +98,7 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
   // 5. Consultar los datos de las personas
   const { data: persons } = await supabase
     .from("persons")
-    .select("id, first_name, last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
+    .select("id, first_name, middle_name, last_name, maternal_last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
     .in("id", allFamilyIds);
 
   if (!persons) return [];
@@ -110,13 +110,15 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
     .in("person_id", allFamilyIds)
     .order("created_at", { ascending: false });
 
-  const personsMap = new Map<string, { id: string; firstName: string; lastName: string; gender: Gender }>(
+  const personsMap = new Map<string, { id: string; firstName: string; middleName?: string | null; lastName: string; maternalLastName?: string | null; gender: Gender }>(
     persons.map((p) => [
       p.id,
       {
         id: p.id,
         firstName: p.first_name,
+        middleName: p.middle_name,
         lastName: p.last_name,
+        maternalLastName: p.maternal_last_name,
         gender: p.gender as Gender,
       },
     ])
@@ -162,7 +164,9 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
     return {
       id: p.id,
       firstName: p.first_name,
+      middleName: p.middle_name,
       lastName: p.last_name,
+      maternalLastName: p.maternal_last_name,
       maidenName: p.maiden_name,
       gender: p.gender,
       birthDate: p.birth_date,
@@ -215,7 +219,9 @@ export async function createFamilyMemberAction(formData: FormData) {
   const currentPersonId = requestedAnchorId || profile.person_id;
 
   const firstName = (formData.get("first_name") as string)?.trim();
+  const middleName = (formData.get("middle_name") as string)?.trim() || null;
   const lastName = (formData.get("last_name") as string)?.trim();
+  const maternalLastName = (formData.get("maternal_last_name") as string)?.trim() || null;
   const gender = (formData.get("gender") as Gender) || "unknown";
   const birthDate = (formData.get("birth_date") as string) || null;
   const isLiving = formData.get("is_living") === "true";
@@ -223,7 +229,7 @@ export async function createFamilyMemberAction(formData: FormData) {
   const inviteEmail = (formData.get("invite_email") as string)?.trim() || null;
 
   if (!firstName || !lastName) {
-    return { error: "El nombre y los apellidos son obligatorios." };
+    return { error: "El primer nombre y el apellido paterno son obligatorios." };
   }
 
   // 1. Crear el nuevo nodo en persons (is_claimed = false)
@@ -231,7 +237,9 @@ export async function createFamilyMemberAction(formData: FormData) {
     .from("persons")
     .insert({
       first_name: firstName,
+      middle_name: middleName,
       last_name: lastName,
+      maternal_last_name: maternalLastName,
       gender,
       birth_date: birthDate,
       is_living: isLiving,
@@ -249,7 +257,7 @@ export async function createFamilyMemberAction(formData: FormData) {
 
   // 2. Crear las aristas (Edges) según la relación
   if (relationship === "father" || relationship === "mother") {
-    // 2.1 Vincular el nuevo padre/madre con el usuario actual
+    // 2.1 Vincular el nuevo padre/madre con la persona de referencia (anchor)
     await supabase.from("parent_child_edges").insert({
       parent_id: newPersonId,
       child_id: currentPersonId,
@@ -258,7 +266,8 @@ export async function createFamilyMemberAction(formData: FormData) {
       created_by_user_id: user.id,
     });
 
-    // 2.2 Si el usuario ya tiene otro progenitor registrado, vincular a ambos progenitores como pareja/cónyuges
+    // 2.2 Si la persona de referencia ya tiene otro progenitor registrado y no hay unión activa,
+    // consultar si se debe enlazar
     const { data: existingParents } = await supabase
       .from("parent_child_edges")
       .select("parent_id")
@@ -267,36 +276,18 @@ export async function createFamilyMemberAction(formData: FormData) {
     if (existingParents && existingParents.length > 0) {
       for (const ep of existingParents) {
         if (ep.parent_id !== newPersonId) {
-          await supabase.from("union_edges").insert({
-            person_a_id: ep.parent_id,
-            person_b_id: newPersonId,
-            union_type: "married",
-            status: "confirmed",
-            created_by_user_id: user.id,
-          });
-        }
-      }
-    }
+          // Verificar si ya existe alguna unión entre ambos
+          const { data: existingUnion } = await supabase
+            .from("union_edges")
+            .select("id")
+            .or(`and(person_a_id.eq.${ep.parent_id},person_b_id.eq.${newPersonId}),and(person_a_id.eq.${newPersonId},person_b_id.eq.${ep.parent_id})`)
+            .maybeSingle();
 
-    // 2.3 Si el usuario tiene hermanos registrados (hijos de otros progenitores o familiares), vincular también al nuevo progenitor
-    if (existingParents && existingParents.length > 0) {
-      const otherParentIds = existingParents
-        .map((p) => p.parent_id)
-        .filter((id) => id !== newPersonId);
-
-      if (otherParentIds.length > 0) {
-        const { data: siblings } = await supabase
-          .from("parent_child_edges")
-          .select("child_id")
-          .in("parent_id", otherParentIds)
-          .neq("child_id", currentPersonId);
-
-        if (siblings && siblings.length > 0) {
-          for (const sib of siblings) {
-            await supabase.from("parent_child_edges").insert({
-              parent_id: newPersonId,
-              child_id: sib.child_id,
-              relationship_type: "biological",
+          if (!existingUnion) {
+            await supabase.from("union_edges").insert({
+              person_a_id: ep.parent_id,
+              person_b_id: newPersonId,
+              union_type: "married",
               status: "confirmed",
               created_by_user_id: user.id,
             });
@@ -305,7 +296,7 @@ export async function createFamilyMemberAction(formData: FormData) {
       }
     }
   } else if (relationship === "son" || relationship === "daughter") {
-    // 2.4 Vincular el hijo con el usuario actual
+    // 2.4 Vincular el hijo con la persona de referencia
     await supabase.from("parent_child_edges").insert({
       parent_id: currentPersonId,
       child_id: newPersonId,
@@ -314,16 +305,18 @@ export async function createFamilyMemberAction(formData: FormData) {
       created_by_user_id: user.id,
     });
 
-    // Si el usuario tiene cónyuge/pareja, vincular al hijo también con la pareja
+    // Si la persona de referencia tiene cónyuge/pareja actual, vincular al hijo también con la pareja
     const { data: spousesA } = await supabase
       .from("union_edges")
-      .select("person_b_id")
-      .eq("person_a_id", currentPersonId);
+      .select("person_b_id, union_type")
+      .eq("person_a_id", currentPersonId)
+      .not("union_type", "in", '("divorced","separated")');
 
     const { data: spousesB } = await supabase
       .from("union_edges")
-      .select("person_a_id")
-      .eq("person_b_id", currentPersonId);
+      .select("person_a_id, union_type")
+      .eq("person_b_id", currentPersonId)
+      .not("union_type", "in", '("divorced","separated")');
 
     const spouseIds = [
       ...(spousesA?.map((s) => s.person_b_id) ?? []),
@@ -348,7 +341,7 @@ export async function createFamilyMemberAction(formData: FormData) {
       created_by_user_id: user.id,
     });
   } else if (relationship === "brother" || relationship === "sister") {
-    // Buscar los padres del usuario actual para asociar al hermano con ambos
+    // Buscar los padres de la persona ancla
     const { data: parents } = await supabase
       .from("parent_child_edges")
       .select("parent_id")
@@ -363,6 +356,48 @@ export async function createFamilyMemberAction(formData: FormData) {
           status: "confirmed",
           created_by_user_id: user.id,
         });
+      }
+    } else {
+      // Si la persona de referencia no tiene padres registrados aún:
+      // Creamos un nodo de linaje/progenitor común para que ambos hermanos queden conectados en el árbol
+      const { data: anchorPerson } = await supabase
+        .from("persons")
+        .select("first_name, last_name, maternal_last_name")
+        .eq("id", currentPersonId)
+        .single();
+
+      const lineageLastName = anchorPerson?.last_name || lastName || "Linaje Familiar";
+      const { data: sharedParent } = await supabase
+        .from("persons")
+        .insert({
+          first_name: "Progenitor/a",
+          last_name: lineageLastName,
+          gender: "unknown",
+          is_living: true,
+          is_claimed: false,
+          bio: `Nodo de linaje ancestral común creado para conectar a ${anchorPerson?.first_name ?? "familiar"} con su hermano/a ${firstName}. Puedes editar este nodo para registrar el nombre real de tu abuelo/a.`,
+          created_by_user_id: user.id,
+        })
+        .select("id")
+        .single();
+
+      if (sharedParent) {
+        await supabase.from("parent_child_edges").insert([
+          {
+            parent_id: sharedParent.id,
+            child_id: currentPersonId,
+            relationship_type: "biological",
+            status: "confirmed",
+            created_by_user_id: user.id,
+          },
+          {
+            parent_id: sharedParent.id,
+            child_id: newPersonId,
+            relationship_type: "biological",
+            status: "confirmed",
+            created_by_user_id: user.id,
+          },
+        ]);
       }
     }
   }
@@ -411,7 +446,9 @@ export async function updateFamilyMemberAction(formData: FormData) {
 
   const personId = (formData.get("person_id") as string)?.trim();
   const firstName = (formData.get("first_name") as string)?.trim();
+  const middleName = (formData.get("middle_name") as string)?.trim() || null;
   const lastName = (formData.get("last_name") as string)?.trim();
+  const maternalLastName = (formData.get("maternal_last_name") as string)?.trim() || null;
   const maidenName = (formData.get("maiden_name") as string)?.trim() || null;
   const gender = (formData.get("gender") as Gender) || "unknown";
   const birthDate = (formData.get("birth_date") as string) || null;
@@ -425,7 +462,7 @@ export async function updateFamilyMemberAction(formData: FormData) {
   }
 
   if (!firstName || !lastName) {
-    return { error: "El nombre y los apellidos son obligatorios." };
+    return { error: "El primer nombre y el apellido paterno son obligatorios." };
   }
 
   // Validación de coherencia en fechas
@@ -471,7 +508,9 @@ export async function updateFamilyMemberAction(formData: FormData) {
     .from("persons")
     .update({
       first_name: firstName,
+      middle_name: middleName,
       last_name: lastName,
+      maternal_last_name: maternalLastName,
       maiden_name: maidenName,
       gender,
       birth_date: birthDate,
