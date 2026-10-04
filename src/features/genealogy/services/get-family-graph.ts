@@ -623,6 +623,17 @@ export async function getFamilyGraph(
       };
     });
 
+    const personChildren = allParentEdges?.filter((e) => e.parent_id === p.id) ?? [];
+    const childConnections = personChildren.map((e) => {
+      const childObj = personsMap.get(e.child_id);
+      return {
+        id: e.id,
+        childId: e.child_id,
+        childName: childObj ? `${childObj.firstName} ${childObj.lastName}` : "Descendiente",
+        relationshipType: e.relationship_type || "biological",
+      };
+    });
+
     return {
       id: p.id,
       firstName: p.first_name,
@@ -644,6 +655,7 @@ export async function getFamilyGraph(
       relationshipExplanation,
       accountEmail: isViewerGuest ? null : ((token?.invited_email && token.invited_email.trim() !== "") ? token.invited_email.trim() : null),
       parentConnections,
+      childConnections,
       invitationStatus: isViewerGuest ? null : (token?.status ?? null),
       invitationToken: isViewerGuest ? null : (token?.token ?? null),
       unionInfo,
@@ -667,6 +679,7 @@ export async function getFamilyGraph(
     }
   });
 
+  // Únicamente uniones conyugales explícitas registradas en base de datos
   treeVisibleUnions.forEach((u) => {
     if (nodeIds.includes(u.person_a_id) && nodeIds.includes(u.person_b_id)) {
       edges.push({
@@ -676,42 +689,6 @@ export async function getFamilyGraph(
         type: "union",
         unionType: u.union_type,
       });
-    }
-  });
-
-  // Copadres si comparten hijos y no tienen unión explícita previa
-  const childToParents = new Map<string, string[]>();
-  allParentEdges?.forEach((e) => {
-    const list = childToParents.get(e.child_id) || [];
-    if (!list.includes(e.parent_id)) list.push(e.parent_id);
-    childToParents.set(e.child_id, list);
-  });
-
-  childToParents.forEach((pList) => {
-    if (pList.length >= 2) {
-      for (let i = 0; i < pList.length; i++) {
-        for (let j = i + 1; j < pList.length; j++) {
-          const pA = pList[i];
-          const pB = pList[j];
-          if (nodeIds.includes(pA) && nodeIds.includes(pB)) {
-            const alreadyExists = edges.some(
-              (ed) =>
-                ed.type === "union" &&
-                ((ed.sourceId === pA && ed.targetId === pB) ||
-                  (ed.sourceId === pB && ed.targetId === pA))
-            );
-            if (!alreadyExists) {
-              edges.push({
-                id: `coparent-${pA}-${pB}`,
-                sourceId: pA,
-                targetId: pB,
-                type: "union",
-                unionType: "married",
-              });
-            }
-          }
-        }
-      }
     }
   });
 
@@ -861,18 +838,186 @@ export async function getFamilyGraph(
       }
     });
 
-    const totalWidth = count * NODE_WIDTH + (count - 1) * GAP_X;
-    const startX = -totalWidth / 2;
     const y = (gen - minGen) * (NODE_HEIGHT + GAP_Y);
 
-    genNodes.forEach((node, index) => {
-      const x = startX + index * (NODE_WIDTH + GAP_X);
-      positionedNodes.push({
-        ...node,
-        x,
-        y,
+    if (gen > 0) {
+      // Posicionamiento de descendientes agrupados directamente bajo su rama parental (padres / tíos)
+      const positionedMap = new Map(positionedNodes.map((n) => [n.id, n]));
+      const clusterMap = new Map<
+        string,
+        {
+          parentKey: string;
+          targetCenterX: number;
+          nodes: TreeNodeData[];
+        }
+      >();
+      const assignedNodeIds = new Set<string>();
+
+      // Fase 1: Agrupar hijos por unidad parental ya posicionada en generaciones superiores
+      genNodes.forEach((node) => {
+        const pIds = (parentsOf.get(node.id) || []).filter((pId) => positionedMap.has(pId));
+        if (pIds.length > 0) {
+          const pNodes = pIds.map((id) => positionedMap.get(id)!);
+          const parentKey = pNodes.map((p) => p.id).sort().join("_");
+          let targetCenterX = 0;
+
+          if (pNodes.length >= 2) {
+            targetCenterX = (pNodes[0].x! + pNodes[1].x! + NODE_WIDTH) / 2;
+          } else {
+            targetCenterX = pNodes[0].x! + NODE_WIDTH / 2;
+          }
+
+          if (!clusterMap.has(parentKey)) {
+            clusterMap.set(parentKey, {
+              parentKey,
+              targetCenterX,
+              nodes: [],
+            });
+          }
+          clusterMap.get(parentKey)!.nodes.push(node);
+          assignedNodeIds.add(node.id);
+        }
       });
-    });
+
+      // Fase 2: Cónyuges/parejas de miembros ya agrupados (colocar contiguos a su pareja)
+      genNodes.forEach((node) => {
+        if (assignedNodeIds.has(node.id)) return;
+        const partnerId = node.unionInfo?.partnerId;
+        if (partnerId) {
+          for (const cluster of clusterMap.values()) {
+            const partnerIdx = cluster.nodes.findIndex((n) => n.id === partnerId);
+            if (partnerIdx !== -1) {
+              cluster.nodes.splice(partnerIdx + 1, 0, node);
+              assignedNodeIds.add(node.id);
+              break;
+            }
+          }
+        }
+      });
+
+      // Fase 3: Nodos sin progenitores ni parejas identificados en el árbol
+      genNodes.forEach((node) => {
+        if (assignedNodeIds.has(node.id)) return;
+        const key = `orphan_${node.id}`;
+        let targetCenterX = 0;
+        if (maternalIds.has(node.id)) targetCenterX = -300;
+        else if (paternalIds.has(node.id)) targetCenterX = 300;
+
+        clusterMap.set(key, {
+          parentKey: key,
+          targetCenterX,
+          nodes: [node],
+        });
+        assignedNodeIds.add(node.id);
+      });
+
+      const clusters = Array.from(clusterMap.values()).map((c) => {
+        const k = c.nodes.length;
+        const width = k * NODE_WIDTH + (k - 1) * GAP_X;
+        return {
+          ...c,
+          width,
+        };
+      });
+
+      // Ordenar grupos de descendientes de izquierda a derecha según el centro X de sus progenitores
+      clusters.sort((a, b) => a.targetCenterX - b.targetCenterX);
+
+      // Algoritmo de relajación por mínimos cuadrados y evasión de colisiones por bloques contiguos
+      let blocks = clusters.map((c) => ({
+        clusters: [c],
+        offsets: [0],
+      }));
+
+      const computeBlockPositions = (block: typeof blocks[0]) => {
+        const k = block.clusters.length;
+        let sum = 0;
+        for (let j = 0; j < k; j++) {
+          sum += block.clusters[j].targetCenterX - block.offsets[j];
+        }
+        const c0Center = sum / k;
+        const startX = c0Center - block.clusters[0].width / 2;
+        const lastClusterIdx = k - 1;
+        const lastCenter = c0Center + block.offsets[lastClusterIdx];
+        const endX = lastCenter + block.clusters[lastClusterIdx].width / 2;
+        const totalSpan = endX - startX;
+        return { c0Center, startX, endX, totalSpan };
+      };
+
+      let merged = true;
+      while (merged && blocks.length > 1) {
+        merged = false;
+        const newBlocks: typeof blocks = [];
+        let i = 0;
+        while (i < blocks.length) {
+          let curr = blocks[i];
+          let currPos = computeBlockPositions(curr);
+
+          while (i + 1 < blocks.length) {
+            const next = blocks[i + 1];
+            const nextPos = computeBlockPositions(next);
+
+            if (currPos.endX + GAP_X > nextPos.startX) {
+              const lastClusterIdx = curr.clusters.length - 1;
+              const lastCluster = curr.clusters[lastClusterIdx];
+              const nextFirstCluster = next.clusters[0];
+
+              const bridgeGap =
+                lastCluster.width / 2 + GAP_X + nextFirstCluster.width / 2;
+              const baseOffset = curr.offsets[lastClusterIdx] + bridgeGap;
+
+              const combinedClusters = [...curr.clusters, ...next.clusters];
+              const combinedOffsets = [
+                ...curr.offsets,
+                ...next.offsets.map((o) => baseOffset + o),
+              ];
+
+              curr = {
+                clusters: combinedClusters,
+                offsets: combinedOffsets,
+              };
+              currPos = computeBlockPositions(curr);
+              merged = true;
+              i++;
+            } else {
+              break;
+            }
+          }
+          newBlocks.push(curr);
+          i++;
+        }
+        blocks = newBlocks;
+      }
+
+      blocks.forEach((block) => {
+        const { c0Center } = computeBlockPositions(block);
+        block.clusters.forEach((cluster, j) => {
+          const clusterCenter = c0Center + block.offsets[j];
+          const clusterStartX = clusterCenter - cluster.width / 2;
+          cluster.nodes.forEach((node, nodeIdx) => {
+            const x = clusterStartX + nodeIdx * (NODE_WIDTH + GAP_X);
+            positionedNodes.push({
+              ...node,
+              x,
+              y,
+            });
+          });
+        });
+      });
+    } else {
+      // Para gen <= 0 (foco y ancestros), centrado bilateral simétrico regular
+      const totalWidth = count * NODE_WIDTH + (count - 1) * GAP_X;
+      const startX = -totalWidth / 2;
+
+      genNodes.forEach((node, index) => {
+        const x = startX + index * (NODE_WIDTH + GAP_X);
+        positionedNodes.push({
+          ...node,
+          x,
+          y,
+        });
+      });
+    }
   });
 
   const availableMembers = Array.from(

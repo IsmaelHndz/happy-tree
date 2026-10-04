@@ -39,6 +39,12 @@ export interface FamilyMemberItem {
     parentName: string;
     relationshipType: string;
   }[];
+  childConnections?: {
+    id: string;
+    childId: string;
+    childName: string;
+    relationshipType: string;
+  }[];
   unionInfo?: {
     id: string;
     unionType: "married" | "civil_union" | "divorced" | "separated" | "partner";

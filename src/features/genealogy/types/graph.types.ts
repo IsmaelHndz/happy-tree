@@ -26,6 +26,12 @@ export interface TreeNodeData {
     parentName: string;
     relationshipType: string;
   }[];
+  childConnections?: {
+    id: string;
+    childId: string;
+    childName: string;
+    relationshipType: string;
+  }[];
   invitationStatus?: string | null;
   invitationToken?: string | null;
   unionInfo?: {

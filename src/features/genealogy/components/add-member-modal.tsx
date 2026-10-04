@@ -44,7 +44,9 @@ export function AddMemberModal({
   const setAnchorId = (val: string) => setSelectedAnchorId(val);
 
   const [isLiving, setIsLiving] = useState(true);
-  const [relationship, setRelationship] = useState<FamilyRelationshipType>("father");
+  const [relationship, setRelationship] = useState<FamilyRelationshipType>("brother");
+  const [siblingType, setSiblingType] = useState<"both" | "maternal" | "paternal">("both");
+  const [createUnion, setCreateUnion] = useState(false);
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successToken, setSuccessToken] = useState<string | null>(null);
@@ -61,6 +63,12 @@ export function AddMemberModal({
     const formData = new FormData(form);
     formData.set("is_living", String(isLiving));
     formData.set("relationship", relationship);
+    if (relationship === "brother" || relationship === "sister") {
+      formData.set("sibling_type", siblingType);
+    }
+    if (relationship === "father" || relationship === "mother") {
+      formData.set("create_union", String(createUnion));
+    }
     if (anchorId || defaultAnchorId) {
       formData.set("anchor_person_id", anchorId || defaultAnchorId || "");
     }
@@ -225,6 +233,81 @@ export function AddMemberModal({
                     <option value="brother">Hermano de {activeAnchorName}</option>
                     <option value="sister">Hermana de {activeAnchorName}</option>
                   </select>
+
+                  {/* Selector contextual de Hermandad (Evita asunciones erróneas de progenitores) */}
+                  {(relationship === "brother" || relationship === "sister") && (
+                    <div className="mt-3 p-3.5 bg-neutral-900/80 border border-emerald-900/40 rounded-2xl space-y-2 animate-in fade-in">
+                      <span className="block text-xs font-semibold text-emerald-300">
+                        ¿Qué vínculo de hermandad comparten con {activeAnchorName}?
+                      </span>
+                      <div className="space-y-2 pt-1 text-xs">
+                        <label className="flex items-start gap-2.5 cursor-pointer text-neutral-200">
+                          <input
+                            type="radio"
+                            name="sibling_type_ui"
+                            value="both"
+                            checked={siblingType === "both"}
+                            onChange={() => setSiblingType("both")}
+                            className="mt-0.5 text-emerald-500 focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
+                          />
+                          <div>
+                            <span className="font-medium text-white">Hermano/a completo</span>
+                            <span className="block text-[11px] text-neutral-400">Comparte ambos progenitores (padre y madre biológicos).</span>
+                          </div>
+                        </label>
+                        <label className="flex items-start gap-2.5 cursor-pointer text-neutral-200">
+                          <input
+                            type="radio"
+                            name="sibling_type_ui"
+                            value="maternal"
+                            checked={siblingType === "maternal"}
+                            onChange={() => setSiblingType("maternal")}
+                            className="mt-0.5 text-emerald-500 focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
+                          />
+                          <div>
+                            <span className="font-medium text-white">Medio hermano/a materno</span>
+                            <span className="block text-[11px] text-neutral-400">Solo comparte la madre biológica (diferente padre).</span>
+                          </div>
+                        </label>
+                        <label className="flex items-start gap-2.5 cursor-pointer text-neutral-200">
+                          <input
+                            type="radio"
+                            name="sibling_type_ui"
+                            value="paternal"
+                            checked={siblingType === "paternal"}
+                            onChange={() => setSiblingType("paternal")}
+                            className="mt-0.5 text-emerald-500 focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
+                          />
+                          <div>
+                            <span className="font-medium text-white">Medio hermano/a paterno</span>
+                            <span className="block text-[11px] text-neutral-400">Solo comparte el padre biológico (diferente madre).</span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Confirmación opcional de unión marital para Progenitores */}
+                  {(relationship === "father" || relationship === "mother") && (
+                    <div className="mt-3 p-3 bg-neutral-900/60 border border-neutral-800 rounded-2xl animate-in fade-in">
+                      <label className="flex items-start gap-2.5 cursor-pointer text-xs">
+                        <input
+                          type="checkbox"
+                          checked={createUnion}
+                          onChange={(e) => setCreateUnion(e.target.checked)}
+                          className="mt-0.5 text-emerald-500 rounded focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
+                        />
+                        <div>
+                          <span className="font-medium text-neutral-200">
+                            Vincular como pareja/cónyuge del otro progenitor existente
+                          </span>
+                          <p className="text-[11px] text-neutral-400 mt-0.5 leading-relaxed">
+                            Si se deja desmarcado, se registrará únicamente como progenitor biológico sin forzar un matrimonio ni unión conyugal.
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 {/* Nombres y Apellidos Separados */}

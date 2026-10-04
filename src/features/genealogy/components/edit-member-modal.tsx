@@ -9,6 +9,8 @@ import {
   dissolveUnionAction,
   resetPersonClaimAction,
   updatePersonParentsAction,
+  unlinkParentChildAction,
+  convertParentToSiblingAction,
 } from "@/features/genealogy/actions";
 import {
   X,
@@ -28,6 +30,7 @@ import {
   Sparkles,
   GitFork,
   Plus,
+  Users,
 } from "lucide-react";
 import type { Gender } from "@/types/database.types";
 
@@ -53,6 +56,12 @@ export interface EditableMemberData {
     id: string;
     parentId: string;
     parentName: string;
+    relationshipType: string;
+  }[];
+  childConnections?: {
+    id: string;
+    childId: string;
+    childName: string;
     relationshipType: string;
   }[];
   unionInfo?: {
@@ -126,6 +135,49 @@ export function EditMemberModal({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  // Estado para descendencia (Hijos registrados)
+  const [children, setChildren] = useState(member.childConnections || []);
+  const [isUnlinkingChildId, setIsUnlinkingChildId] = useState<string | null>(null);
+  const [childSuccessMessage, setChildSuccessMessage] = useState<string | null>(null);
+
+  // Estado para reasignación de rol (Convertir en Hermano/a)
+  const [isConvertingRole, setIsConvertingRole] = useState(false);
+  const [convertSuccessMessage, setConvertSuccessMessage] = useState<string | null>(null);
+
+  const handleUnlinkChild = async (childId: string) => {
+    setIsUnlinkingChildId(childId);
+    setError(null);
+    setChildSuccessMessage(null);
+    const res = await unlinkParentChildAction({ parentId: member.id, childId });
+    setIsUnlinkingChildId(null);
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setChildren((prev) => prev.filter((c) => c.childId !== childId));
+      setChildSuccessMessage("Filiación eliminada con éxito.");
+      router.refresh();
+    }
+  };
+
+  const handleConvertToSibling = async (anchorChildId: string) => {
+    setIsConvertingRole(true);
+    setError(null);
+    setConvertSuccessMessage(null);
+    const res = await convertParentToSiblingAction({
+      personId: member.id,
+      anchorPersonId: anchorChildId,
+      siblingType: "both",
+    });
+    setIsConvertingRole(false);
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setConvertSuccessMessage("¡Rol reasignado exitosamente como hermano/a de la familia!");
+      setChildren([]);
+      router.refresh();
+    }
+  };
 
   const handleAssignViewerParents = async () => {
     if (!viewerParents || viewerParents.length === 0) return;
@@ -618,6 +670,99 @@ export function EditMemberModal({
             </div>
           )}
         </div>
+
+        {/* ASISTENTE GENEALÓGICO: REASIGNACIÓN DE ROL (DE PROGENITOR A HERMANO/A) */}
+        {!isClaimedOther && (children.length > 0 || member.relationshipCategory === "parent") && (
+          <div className="mb-6 p-4 rounded-2xl bg-amber-950/30 border border-amber-800/50 space-y-2.5">
+            <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
+              <RotateCcw className="w-4 h-4 text-amber-400" />
+              <span>Corrección Genealógica: ¿Es hermano/a en lugar de padre/madre?</span>
+            </div>
+            <p className="text-xs text-amber-200/80 leading-relaxed">
+              Si esta persona fue registrada por error como progenitor/a pero en realidad es hermano/a de la familia, puedes reasignar su rol. Se desvinculará como padre de sus supuestos hijos y se asignará como hermano/a compartiendo los progenitores de la rama familiar.
+            </p>
+            {children.length > 0 && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  disabled={isConvertingRole}
+                  onClick={() => handleConvertToSibling(children[0].childId)}
+                  className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                >
+                  {isConvertingRole ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <GitFork className="w-3.5 h-3.5" />
+                  )}
+                  <span>Convertir en Hermano/a de {children[0].childName}</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SECCIÓN: DESCENDENCIA / HIJOS REGISTRADOS */}
+        <div className="mb-6 p-4 rounded-2xl bg-neutral-950/70 border border-neutral-800/80 space-y-3">
+          <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
+            <div className="flex items-center gap-2 text-xs font-bold text-neutral-200">
+              <Users className="w-4 h-4 text-emerald-400" />
+              <span>Descendencia (Hijos Registrados)</span>
+            </div>
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-neutral-400">
+              {children.length} {children.length === 1 ? "hijo/a" : "hijos/as"}
+            </span>
+          </div>
+
+          {children.length === 0 ? (
+            <p className="text-xs text-neutral-500 italic">No tiene hijos registrados bajo esta ficha.</p>
+          ) : (
+            <div className="space-y-2">
+              {children.map((c) => (
+                <div
+                  key={c.childId}
+                  className="flex items-center justify-between px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 text-xs"
+                >
+                  <div>
+                    <span className="text-white font-medium block">{c.childName}</span>
+                    <span className="text-[10px] text-neutral-400">Filiación {c.relationshipType}</span>
+                  </div>
+                  {!isClaimedOther && (
+                    <button
+                      type="button"
+                      disabled={isUnlinkingChildId === c.childId}
+                      onClick={() => handleUnlinkChild(c.childId)}
+                      className="text-red-400 hover:text-red-300 px-2 py-1 hover:bg-red-950/40 rounded-lg transition text-xs flex items-center gap-1 border border-red-900/40 disabled:opacity-50"
+                      title="Desvincular como hijo/a"
+                    >
+                      {isUnlinkingChildId === c.childId ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <X className="w-3.5 h-3.5" />
+                      )}
+                      <span>Desvincular</span>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Mensaje de Éxito de Reasignación de Rol */}
+        {convertSuccessMessage && (
+          <div className="mb-4 p-3 rounded-2xl bg-amber-950/50 border border-amber-500/50 text-amber-200 text-xs flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{convertSuccessMessage}</span>
+          </div>
+        )}
+
+        {/* Mensaje de Éxito de Descendencia */}
+        {childSuccessMessage && (
+          <div className="mb-4 p-3 rounded-2xl bg-teal-950/50 border border-teal-500/50 text-teal-200 text-xs flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" />
+            <span>{childSuccessMessage}</span>
+          </div>
+        )}
 
         {/* Alerta de Error */}
         {error && (

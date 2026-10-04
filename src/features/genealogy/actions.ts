@@ -202,6 +202,17 @@ export async function getFamilyMembers(perspectivePersonId?: string): Promise<Fa
       };
     });
 
+    const personChildren = allParentEdges?.filter((e) => e.parent_id === p.id) || [];
+    const childConnections = personChildren.map((e) => {
+      const childObj = personsMap.get(e.child_id);
+      return {
+        id: e.id,
+        childId: e.child_id,
+        childName: childObj ? `${childObj.firstName} ${childObj.lastName}` : "Descendiente",
+        relationshipType: e.relationship_type || "biological",
+      };
+    });
+
     const inviteToken = tokens?.find((t) => t.person_id === p.id);
 
     return {
@@ -228,6 +239,7 @@ export async function getFamilyMembers(perspectivePersonId?: string): Promise<Fa
       invitedEmail: (inviteToken?.invited_email && inviteToken.invited_email.trim() !== "") ? inviteToken.invited_email.trim() : null,
       accountEmail: (inviteToken?.invited_email && inviteToken.invited_email.trim() !== "") ? inviteToken.invited_email.trim() : null,
       parentConnections,
+      childConnections,
       unionInfo,
     };
   });
@@ -285,6 +297,8 @@ export async function createFamilyMemberAction(formData: FormData) {
   const birthDate = (formData.get("birth_date") as string) || null;
   const isLiving = formData.get("is_living") === "true";
   const relationship = (formData.get("relationship") as FamilyRelationshipType) || "father";
+  const siblingType = (formData.get("sibling_type") as "both" | "maternal" | "paternal") || "both";
+  const createUnion = formData.get("create_union") === "true";
   const inviteEmail = (formData.get("invite_email") as string)?.trim() || null;
 
   if (!firstName || !lastName) {
@@ -350,31 +364,32 @@ export async function createFamilyMemberAction(formData: FormData) {
       created_by_user_id: user.id,
     });
 
-    // 2.2 Si la persona de referencia ya tiene otro progenitor registrado y no hay unión activa,
-    // consultar si se debe enlazar
-    const { data: existingParents } = await supabase
-      .from("parent_child_edges")
-      .select("parent_id")
-      .eq("child_id", currentPersonId);
+    // 2.2 ÚNICAMENTE si el usuario confirmó explícitamente crear la unión matrimonial/pareja con el otro progenitor
+    if (createUnion) {
+      const { data: existingParents } = await supabase
+        .from("parent_child_edges")
+        .select("parent_id")
+        .eq("child_id", currentPersonId);
 
-    if (existingParents && existingParents.length > 0) {
-      for (const ep of existingParents) {
-        if (ep.parent_id !== newPersonId) {
-          // Verificar si ya existe alguna unión entre ambos
-          const { data: existingUnion } = await supabase
-            .from("union_edges")
-            .select("id")
-            .or(`and(person_a_id.eq.${ep.parent_id},person_b_id.eq.${newPersonId}),and(person_a_id.eq.${newPersonId},person_b_id.eq.${ep.parent_id})`)
-            .maybeSingle();
+      if (existingParents && existingParents.length > 0) {
+        for (const ep of existingParents) {
+          if (ep.parent_id !== newPersonId) {
+            // Verificar si ya existe alguna unión entre ambos
+            const { data: existingUnion } = await supabase
+              .from("union_edges")
+              .select("id")
+              .or(`and(person_a_id.eq.${ep.parent_id},person_b_id.eq.${newPersonId}),and(person_a_id.eq.${newPersonId},person_b_id.eq.${ep.parent_id})`)
+              .maybeSingle();
 
-          if (!existingUnion) {
-            await supabase.from("union_edges").insert({
-              person_a_id: ep.parent_id,
-              person_b_id: newPersonId,
-              union_type: "married",
-              status: "confirmed",
-              created_by_user_id: user.id,
-            });
+            if (!existingUnion) {
+              await supabase.from("union_edges").insert({
+                person_a_id: ep.parent_id,
+                person_b_id: newPersonId,
+                union_type: "married",
+                status: "confirmed",
+                created_by_user_id: user.id,
+              });
+            }
           }
         }
       }
@@ -425,16 +440,43 @@ export async function createFamilyMemberAction(formData: FormData) {
       created_by_user_id: user.id,
     });
   } else if (relationship === "brother" || relationship === "sister") {
-    // Buscar los padres de la persona ancla
-    const { data: parents } = await supabase
+    // Buscar los padres de la persona ancla junto con su género para afinar el tipo de hermandad
+    const { data: parentsData } = await supabase
       .from("parent_child_edges")
-      .select("parent_id")
+      .select("parent_id, persons:parent_id(id, gender)")
       .eq("child_id", currentPersonId);
 
-    if (parents && parents.length > 0) {
-      for (const parent of parents) {
+    if (parentsData && parentsData.length > 0) {
+      let targetParentsToLink: string[] = [];
+
+      if (siblingType === "maternal") {
+        const motherEdge = parentsData.find((pe) => {
+          const p = Array.isArray(pe.persons) ? pe.persons[0] : pe.persons;
+          return (p as { gender?: string } | null)?.gender === "female";
+        });
+        if (motherEdge) {
+          targetParentsToLink.push(motherEdge.parent_id);
+        } else {
+          targetParentsToLink.push(parentsData[0].parent_id);
+        }
+      } else if (siblingType === "paternal") {
+        const fatherEdge = parentsData.find((pe) => {
+          const p = Array.isArray(pe.persons) ? pe.persons[0] : pe.persons;
+          return (p as { gender?: string } | null)?.gender === "male";
+        });
+        if (fatherEdge) {
+          targetParentsToLink.push(fatherEdge.parent_id);
+        } else {
+          targetParentsToLink.push(parentsData[parentsData.length - 1].parent_id);
+        }
+      } else {
+        // "both" (hermano completo)
+        targetParentsToLink = parentsData.map((pe) => pe.parent_id);
+      }
+
+      for (const parentId of targetParentsToLink) {
         await supabase.from("parent_child_edges").insert({
-          parent_id: parent.parent_id,
+          parent_id: parentId,
           child_id: newPersonId,
           relationship_type: "biological",
           status: "confirmed",
@@ -1284,6 +1326,131 @@ export async function updatePersonParentsAction({
   revalidatePath("/tree");
 
   return { success: true, message: "Parentescos actualizados exitosamente." };
+}
+
+/**
+ * Server Action: Desvincular una relación vertical específica entre un progenitor y un hijo.
+ */
+export async function unlinkParentChildAction({
+  parentId,
+  childId,
+}: {
+  parentId: string;
+  childId: string;
+}) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Debes estar autenticado para realizar esta acción." };
+  }
+
+  const { error } = await supabase
+    .from("parent_child_edges")
+    .delete()
+    .eq("parent_id", parentId)
+    .eq("child_id", childId);
+
+  if (error) {
+    return { error: `Error desvinculando filiación: ${error.message}` };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return { success: true, message: "Filiación desvinculada exitosamente." };
+}
+
+/**
+ * Server Action: Reasignar un familiar que fue registrado erróneamente como progenitor/padre para convertirlo en hermano/a de la familia.
+ */
+export async function convertParentToSiblingAction({
+  personId,
+  anchorPersonId,
+  siblingType = "both",
+}: {
+  personId: string;
+  anchorPersonId: string;
+  siblingType?: "both" | "maternal" | "paternal";
+}) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Debes estar autenticado para realizar esta acción." };
+  }
+
+  // 1. Desvincular a personId como padre/progenitor de anchorPersonId y de cualquier hijo que comparta
+  await supabase
+    .from("parent_child_edges")
+    .delete()
+    .eq("parent_id", personId);
+
+  // 2. Consultar los progenitores reales de la persona ancla (anchorPersonId)
+  const { data: anchorParents } = await supabase
+    .from("parent_child_edges")
+    .select("parent_id, persons:parent_id(id, gender)")
+    .eq("child_id", anchorPersonId);
+
+  if (anchorParents && anchorParents.length > 0) {
+    // 3. Eliminar cualquier unión conyugal artificial entre personId y los progenitores de anchorPersonId
+    const parentIds = anchorParents.map((ap) => ap.parent_id);
+    for (const pId of parentIds) {
+      await supabase
+        .from("union_edges")
+        .delete()
+        .or(`and(person_a_id.eq.${personId},person_b_id.eq.${pId}),and(person_a_id.eq.${pId},person_b_id.eq.${personId})`);
+    }
+
+    // 4. Vincular a personId como HIJO de los progenitores de anchorPersonId según siblingType
+    let targetParentIds: string[] = [];
+    if (siblingType === "maternal") {
+      const mother = anchorParents.find((ap) => {
+        const p = Array.isArray(ap.persons) ? ap.persons[0] : ap.persons;
+        return (p as { gender?: string } | null)?.gender === "female";
+      });
+      if (mother) targetParentIds.push(mother.parent_id);
+      else targetParentIds.push(anchorParents[0].parent_id);
+    } else if (siblingType === "paternal") {
+      const father = anchorParents.find((ap) => {
+        const p = Array.isArray(ap.persons) ? ap.persons[0] : ap.persons;
+        return (p as { gender?: string } | null)?.gender === "male";
+      });
+      if (father) targetParentIds.push(father.parent_id);
+      else targetParentIds.push(anchorParents[anchorParents.length - 1].parent_id);
+    } else {
+      // "both": enlazar a todos los progenitores de anchorPersonId
+      targetParentIds = anchorParents.map((ap) => ap.parent_id);
+    }
+
+    for (const pId of targetParentIds) {
+      const { data: existingEdge } = await supabase
+        .from("parent_child_edges")
+        .select("id")
+        .eq("parent_id", pId)
+        .eq("child_id", personId)
+        .maybeSingle();
+
+      if (!existingEdge) {
+        await supabase.from("parent_child_edges").insert({
+          parent_id: pId,
+          child_id: personId,
+          relationship_type: "biological",
+          status: "confirmed",
+          created_by_user_id: user.id,
+        });
+      }
+    }
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return { success: true, message: "Rol reasignado exitosamente como hermano/a." };
 }
 
 /**

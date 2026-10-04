@@ -164,17 +164,25 @@ To group relatives bilaterally without stack overflow:
 | **Gen -2** | Maternal Grandparents | `10` | Left |
 | **Gen -2** | Paternal Grandparents | `30` | Right |
 
-#### Phase 4: Coordinate Mapping
+#### Phase 4: Coordinate Mapping & Descendant Clustering
 ```typescript
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 130;
 const GAP_X = 50;
 const GAP_Y = 150;
+const y = (gen - minGen) * (NODE_HEIGHT + GAP_Y);
 
+// For gen <= 0 (Ancestors & Focus Generation): Bilateral symmetrical centering
 const totalWidth = count * NODE_WIDTH + (count - 1) * GAP_X;
 const startX = -totalWidth / 2;
-const y = (gen - minGen) * (NODE_HEIGHT + GAP_Y);
 const x = startX + index * (NODE_WIDTH + GAP_X);
+
+// For gen > 0 (Descendant Generations): Parent-Aligned Sibling Clusters
+// 1. Group children by parent unit in gen - 1.
+// 2. targetCenterX = parents.length >= 2 ? (p1.x + p2.x + NODE_WIDTH) / 2 : p1.x + NODE_WIDTH / 2.
+// 3. Spouses of descendants are grouped adjacent to their partner.
+// 4. Sort clusters left-to-right by targetCenterX.
+// 5. Block-merging with least-squares relaxation avoids overlaps with exact GAP_X spacing.
 ```
 
 ---
@@ -238,6 +246,18 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
 ### ⚠️ Pitfall 4: Global Search Leaking Private Families
 - **The Bug**: `searchPersonsAction` queried the entire `persons` table globally.
 - **The Solution**: For non-User Zero users, scope the search using `.in("id", allowedPersonIds)`.
+
+### ⚠️ Pitfall 5: Blind Parent Co-Marriage & Sibling Parent Propagation
+- **The Bug**: Adding a father/mother automatically created a marriage union with existing parents of the anchor, and previously propagated the new parent to other siblings. When adding a sibling, the system assumed all parents of the anchor were shared without asking if they were maternal or paternal half-siblings.
+- **The Solution**:
+  1. Explicit `sibling_type` ('both' | 'maternal' | 'paternal') in `createFamilyMemberAction` and `AddMemberModal`.
+  2. Opt-in co-marriage (`create_union`) when registering a second parent (no automatic marriages).
+  3. One-click role conversion (`convertParentToSiblingAction`) and individual child unlinking (`unlinkParentChildAction`) in `EditMemberModal`.
+  4. Removal of synthetic married co-parent unions in `get-family-graph.ts`.
+
+### ⚠️ Pitfall 6: Global Centering of Descendant Generations (`gen > 0`)
+- **The Bug**: Centering every generation at `x = 0` via `startX = -totalWidth / 2` caused children to be placed far from their parents when the parents were off-center (e.g. Jorge Andrés & Rubi on the left, but their children Ismael & Jorge Jr. placed under maternal uncles Luis & Ivan in the center). This caused awkward 400px horizontal detours on parent-child drop lines.
+- **The Solution**: For all descendant generations (`gen > 0`), group children into sibling clusters by parent unit in `gen - 1`, align each cluster directly under the parents' midpoint `(p1.x + p2.x + NODE_WIDTH) / 2`, and apply 1D block-merging with least-squares relaxation to prevent collisions.
 
 ---
 
