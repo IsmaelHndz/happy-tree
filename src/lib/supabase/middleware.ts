@@ -42,7 +42,27 @@ export async function updateSession(request: NextRequest) {
   );
 
   // Refresca el token si ha expirado y valida el usuario
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const pathname = request.nextUrl.pathname;
+
+  // 1. Proteger rutas que requieren autenticación estricta (ej. /tree y cualquier subruta)
+  const isProtectedRoute = pathname.startsWith("/tree");
+  if (isProtectedRoute && !user) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.searchParams.set("redirectTo", pathname);
+    return NextResponse.redirect(url);
+  }
+
+  // 2. Redirigir a usuarios ya autenticados que intenten entrar a /login
+  if (user && pathname === "/login") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/";
+    return NextResponse.redirect(url);
+  }
 
   return supabaseResponse;
 }

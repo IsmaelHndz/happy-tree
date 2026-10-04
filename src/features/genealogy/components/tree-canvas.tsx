@@ -252,6 +252,27 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
         </div>
       </div>
 
+      {/* Estado vacío si no hay nodos */}
+      {graph.nodes.length === 0 && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 pointer-events-none">
+          <div className="p-6 rounded-3xl bg-neutral-900/90 border border-neutral-800 text-neutral-400 max-w-md shadow-2xl backdrop-blur-md pointer-events-auto">
+            <h3 className="text-base font-bold text-white mb-2">
+              Árbol Familiar en Espera
+            </h3>
+            <p className="text-xs text-neutral-400 mb-5 leading-relaxed">
+              No se encontraron registros genealógicos asociados a tu perfil. Puedes volver al directorio para consultar tus fichas o agregar a tus primeros parientes.
+            </p>
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Volver al Directorio</span>
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Contenedor Transformable (Pan & Zoom) */}
       <div
         style={{

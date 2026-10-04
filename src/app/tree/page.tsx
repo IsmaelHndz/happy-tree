@@ -23,6 +23,18 @@ export default async function TreePage({ searchParams }: TreePageProps) {
     redirect("/login");
   }
 
+  // 1. Validar que el usuario tenga un perfil registrado y activo en la red genealógica
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id, is_user_zero, person_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (!profile || (!profile.person_id && !profile.is_user_zero)) {
+    // Cuenta desvinculada, reseteada o sin ficha personal autorizada
+    redirect("/?unauthorized=true");
+  }
+
   const { focus } = await searchParams;
   const graph = await getFamilyGraph(focus);
 

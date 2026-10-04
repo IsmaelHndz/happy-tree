@@ -19,7 +19,14 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
+interface HomeProps {
+  searchParams?: Promise<{ unauthorized?: string; error?: string }>;
+}
+
+export default async function Home({ searchParams }: HomeProps) {
+  const params = await searchParams;
+  const isUnauthorized = Boolean(params?.unauthorized || params?.error);
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -164,6 +171,16 @@ export default async function Home() {
         {user && userProfile ? (
           /* Panel del Usuario Autenticado */
           <div className="space-y-8">
+            {isUnauthorized && (
+              <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-800/60 text-amber-200 text-xs flex items-center gap-3">
+                <Shield className="w-5 h-5 text-amber-400 shrink-0" />
+                <div>
+                  <div className="font-semibold text-white">Acceso Restringido al Árbol</div>
+                  <div>Tu cuenta no cuenta con una ficha genealógica activa vinculada para explorar esa vista.</div>
+                </div>
+              </div>
+            )}
+
             {/* Tarjeta de Identidad y Métricas de Confianza */}
             <div className="bg-neutral-900/80 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-md">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800 pb-6 mb-6">
