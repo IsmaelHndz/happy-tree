@@ -211,7 +211,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
             <div className="flex items-center gap-2">
               <span className="text-xs text-neutral-400">Perspectiva:</span>
               <span className="text-xs font-bold text-white">
-                {graph.focusPerson.firstName} {graph.focusPerson.lastName}
+                {formatFullName(graph.focusPerson)}
               </span>
               {graph.focusPerson.isSelf ? (
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-800 text-emerald-300">
@@ -793,6 +793,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       {/* Modal de Edición */}
       {activeEditMember && (
         <EditMemberModal
+          key={activeEditMember.id}
           member={activeEditMember}
           availableFamilyMembers={graph.nodes.map((n) => ({
             id: n.id,
@@ -816,6 +817,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       {/* Modal de Añadir Pariente Contextual (Anclado al nodo seleccionado) */}
       {activeAddAnchor && (
         <AddMemberModal
+          key={activeAddAnchor.id}
           defaultAnchorId={activeAddAnchor.id}
           defaultAnchorName={formatFullName(activeAddAnchor)}
           availableAnchors={availableAnchors}

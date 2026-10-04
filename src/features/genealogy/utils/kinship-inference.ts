@@ -145,6 +145,16 @@ export function inferKinship({
         rootMeta?.lastName && targetMeta?.lastName &&
         rootMeta.lastName.trim().toLowerCase() !== targetMeta.lastName.trim().toLowerCase();
 
+      // Expareja de un progenitor (comparten hijos, p. ej. el padre de un medio hermano)
+      if (stepParentUnion.union_type === "divorced" || stepParentUnion.union_type === "separated") {
+        return {
+          relationshipLabel: `Expareja de tu ${isMaternal ? "madre" : "padre"}`,
+          relationshipCategory: "other",
+          explanation: `${isFemale ? "Madre" : isMale ? "Padre" : "Progenitor/a"} de tus medios hermanos (expareja de ${parentName})`.trim(),
+          degree: 2,
+        };
+      }
+
       return {
         relationshipLabel: isFemale ? "Madrastra" : isMale ? "Padrastro" : "Padrastro/Madrastra",
         relationshipCategory: "parent",
@@ -372,6 +382,57 @@ export function inferKinship({
         degree: 2,
       };
     }
+  }
+
+  // 11. Familias ensambladas y familia política adicional
+  const partnersOf = (personId: string) =>
+    unions
+      .filter((u) => u.status !== "rejected" && (u.person_a_id === personId || u.person_b_id === personId))
+      .map((u) => (u.person_a_id === personId ? u.person_b_id : u.person_a_id));
+  const targetPartners = partnersOf(targetPersonId);
+
+  // 11.1 Pareja de un hijo/a -> Yerno / Nuera
+  const childPartnerOf = rootChildIds.find((cId) => targetPartners.includes(cId));
+  if (childPartnerOf) {
+    const childObj = personsMap?.get(childPartnerOf);
+    return {
+      relationshipLabel: isFemale ? "Nuera" : isMale ? "Yerno" : "Yerno/Nuera",
+      relationshipCategory: "other",
+      explanation: `Pareja de tu ${childObj?.gender === "female" ? "hija" : "hijo"} ${childObj?.firstName ?? ""}`.trim(),
+      degree: 2,
+    };
+  }
+
+  // 11.2 Progenitor de un medio hermano que no es tu progenitor (p. ej. el otro padre de los hijos de tu madre)
+  const rootSiblingIds = parentEdges
+    .filter((e) => rootParentIds.includes(e.parent_id) && e.child_id !== rootPersonId)
+    .map((e) => e.child_id);
+  const halfSiblingChildId = rootSiblingIds.find((sId) =>
+    parentEdges.some((e) => e.parent_id === targetPersonId && e.child_id === sId)
+  );
+  if (halfSiblingChildId && !rootParentIds.includes(targetPersonId)) {
+    const sibObj = personsMap?.get(halfSiblingChildId);
+    return {
+      relationshipLabel: `${isFemale ? "Madre" : isMale ? "Padre" : "Progenitor/a"} de tu medio hermano/a`,
+      relationshipCategory: "other",
+      explanation: `${isFemale ? "Madre" : isMale ? "Padre" : "Progenitor/a"} de ${sibObj?.firstName ?? "tu medio hermano/a"}`,
+      degree: 2,
+    };
+  }
+
+  // 11.3 Pareja de un abuelo/a que no es tu abuelo/a
+  const rootGrandParentIds = parentEdges
+    .filter((e) => rootParentIds.includes(e.child_id))
+    .map((e) => e.parent_id);
+  const grandParentPartnerOf = rootGrandParentIds.find((gpId) => targetPartners.includes(gpId));
+  if (grandParentPartnerOf) {
+    const gpObj = personsMap?.get(grandParentPartnerOf);
+    return {
+      relationshipLabel: `Pareja de tu ${gpObj?.gender === "female" ? "abuela" : "abuelo"}`,
+      relationshipCategory: "other",
+      explanation: `Pareja de ${gpObj?.firstName ?? "tu abuelo/a"}`,
+      degree: 3,
+    };
   }
 
   // Fallback por defecto

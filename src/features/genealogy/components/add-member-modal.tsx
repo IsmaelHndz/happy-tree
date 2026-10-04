@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { createFamilyMemberAction } from "@/features/genealogy/actions";
-import { UserPlus, X, Heart, Users, Mail, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
-import type { FamilyRelationshipType } from "../types";
+import { useEffect, useState } from "react";
+import {
+  createFamilyMemberAction,
+  getAnchorContextAction,
+  type AnchorContext,
+} from "@/features/genealogy/actions";
+import { UserPlus, X, Users, Mail, Loader2, AlertCircle, CheckCircle2, Info } from "lucide-react";
+import type { Gender } from "@/types/database.types";
 
 export interface AddMemberModalProps {
   defaultAnchorId?: string;
@@ -12,6 +16,45 @@ export interface AddMemberModalProps {
   triggerButton?: React.ReactNode;
   isOpen?: boolean;
   onClose?: () => void;
+}
+
+type RelationChoice = "father" | "mother" | "brother" | "sister" | "son" | "daughter" | "partner";
+
+const RELATION_OPTIONS: { value: RelationChoice; label: string; gender: Gender | null }[] = [
+  { value: "father", label: "Padre", gender: "male" },
+  { value: "mother", label: "Madre", gender: "female" },
+  { value: "brother", label: "Hermano", gender: "male" },
+  { value: "sister", label: "Hermana", gender: "female" },
+  { value: "son", label: "Hijo", gender: "male" },
+  { value: "daughter", label: "Hija", gender: "female" },
+  { value: "partner", label: "Pareja", gender: null },
+];
+
+const inputClass =
+  "w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition";
+const labelClass = "block text-xs font-medium text-neutral-300 mb-1.5";
+
+function segmentClass(active: boolean) {
+  return `flex-1 px-3 py-2 rounded-lg text-xs font-medium transition border ${
+    active
+      ? "bg-emerald-600 border-emerald-500 text-white"
+      : "bg-neutral-950 border-neutral-800 text-neutral-300 hover:border-neutral-600 hover:text-white"
+  }`;
+}
+
+function Hint({ children, tone = "info" }: { children: React.ReactNode; tone?: "info" | "warn" }) {
+  return (
+    <div
+      className={`flex items-start gap-2 p-3 rounded-xl text-[11px] leading-relaxed border ${
+        tone === "warn"
+          ? "bg-amber-950/30 border-amber-800/50 text-amber-200"
+          : "bg-neutral-950/60 border-neutral-800 text-neutral-400"
+      }`}
+    >
+      <Info className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${tone === "warn" ? "text-amber-400" : "text-emerald-400"}`} />
+      <div>{children}</div>
+    </div>
+  );
 }
 
 export function AddMemberModal({
@@ -25,88 +68,247 @@ export function AddMemberModal({
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const isOpen = externalIsOpen !== undefined ? externalIsOpen : internalIsOpen;
 
-  const setIsOpen = (val: boolean) => {
-    setInternalIsOpen(val);
-    if (!val && externalOnClose) {
-      externalOnClose();
-    }
-  };
-
   const [selectedAnchorId, setSelectedAnchorId] = useState<string | null>(null);
-  const [prevDefaultAnchorId, setPrevDefaultAnchorId] = useState(defaultAnchorId);
+  const anchorId = selectedAnchorId ?? defaultAnchorId ?? availableAnchors?.[0]?.id ?? "";
+  const anchorName = (
+    availableAnchors?.find((a) => a.id === anchorId)?.name ||
+    (anchorId === defaultAnchorId ? defaultAnchorName : undefined) ||
+    "esta persona"
+  ).replace(/^Tú \((.*)\)$/, "$1");
+  const anchorFirstName = anchorName.split(" ")[0];
 
-  if (defaultAnchorId !== prevDefaultAnchorId) {
-    setPrevDefaultAnchorId(defaultAnchorId);
-    setSelectedAnchorId(null);
-  }
-
-  const anchorId = selectedAnchorId ?? (defaultAnchorId || "");
-  const setAnchorId = (val: string) => setSelectedAnchorId(val);
-
-  const [isLiving, setIsLiving] = useState(true);
-  const [relationship, setRelationship] = useState<FamilyRelationshipType>("brother");
+  const [relation, setRelation] = useState<RelationChoice | null>(null);
   const [siblingType, setSiblingType] = useState<"both" | "maternal" | "paternal">("both");
   const [createUnion, setCreateUnion] = useState(false);
+  const [coParentChoice, setCoParentChoice] = useState<string | null>(null);
+  const [partnerKind, setPartnerKind] = useState<"spouse" | "partner">("spouse");
+  const [partnerGender, setPartnerGender] = useState<Gender>("unknown");
+  const [isLiving, setIsLiving] = useState(true);
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successToken, setSuccessToken] = useState<string | null>(null);
 
-  const selectedAnchor = availableAnchors?.find((a) => a.id === (anchorId || defaultAnchorId));
-  const activeAnchorName = selectedAnchor?.name || defaultAnchorName || "ti";
+  // Contexto del familiar ancla (sus padres y parejas) para hacer preguntas con nombres reales
+  const [anchorContext, setAnchorContext] = useState<{ anchorId: string; data: AnchorContext } | null>(null);
+  useEffect(() => {
+    if (!isOpen || !anchorId) return;
+    let cancelled = false;
+    getAnchorContextAction(anchorId).then((data) => {
+      if (!cancelled) setAnchorContext({ anchorId, data });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, anchorId]);
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setIsPending(true);
+  const context = anchorContext?.anchorId === anchorId ? anchorContext.data : null;
+  const isContextLoading = Boolean(anchorId) && context === null;
+  const parents = context?.parents ?? [];
+  const mother = parents.find((p) => p.gender === "female");
+  const father = parents.find((p) => p.gender === "male");
+  const coParents = context?.coParents ?? [];
+  const coParentId = coParentChoice ?? context?.defaultCoParentId ?? "none";
+
+  const resetForm = () => {
+    setSelectedAnchorId(null);
+    setRelation(null);
+    setSiblingType("both");
+    setCreateUnion(false);
+    setCoParentChoice(null);
+    setPartnerKind("spouse");
+    setPartnerGender("unknown");
+    setIsLiving(true);
     setError(null);
-
-    const form = e.currentTarget;
-    const formData = new FormData(form);
-    formData.set("is_living", String(isLiving));
-    formData.set("relationship", relationship);
-    if (relationship === "brother" || relationship === "sister") {
-      formData.set("sibling_type", siblingType);
-    }
-    if (relationship === "father" || relationship === "mother") {
-      formData.set("create_union", String(createUnion));
-    }
-    if (anchorId || defaultAnchorId) {
-      formData.set("anchor_person_id", anchorId || defaultAnchorId || "");
-    }
-
-    const result = await createFamilyMemberAction(formData);
-
-    setIsPending(false);
-    if (result.error) {
-      setError(result.error);
-    } else {
-      if (result.invitationToken) {
-        setSuccessToken(result.invitationToken);
-      } else {
-        setIsOpen(false);
-        form.reset();
-      }
-    }
+    setSuccessToken(null);
   };
 
   const handleClose = () => {
-    setIsOpen(false);
+    resetForm();
+    setInternalIsOpen(false);
+    externalOnClose?.();
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!relation) {
+      setError("Elige qué parentesco tiene con " + anchorFirstName + ".");
+      return;
+    }
+
+    setIsPending(true);
     setError(null);
-    setSuccessToken(null);
-    if (externalOnClose) {
-      externalOnClose();
+
+    const formData = new FormData(e.currentTarget);
+    const option = RELATION_OPTIONS.find((o) => o.value === relation)!;
+    formData.set("relationship", relation === "partner" ? partnerKind : relation);
+    formData.set("gender", option.gender ?? partnerGender);
+    formData.set("is_living", String(isLiving));
+    if (anchorId) formData.set("anchor_person_id", anchorId);
+    if (relation === "brother" || relation === "sister") formData.set("sibling_type", siblingType);
+    if (relation === "father" || relation === "mother") formData.set("create_union", String(createUnion));
+    if (relation === "son" || relation === "daughter") formData.set("co_parent_id", coParentId);
+
+    const result = await createFamilyMemberAction(formData);
+    setIsPending(false);
+
+    if (result.error) {
+      setError(result.error);
+    } else if (result.invitationToken) {
+      setSuccessToken(result.invitationToken);
+    } else {
+      handleClose();
     }
   };
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const inviteUrl = successToken ? `${origin}/invite/${successToken}` : "";
 
+  const renderRelationDetails = () => {
+    if (!relation) return null;
+    if (isContextLoading) {
+      return (
+        <div className="flex items-center gap-2 text-[11px] text-neutral-500 px-1">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          <span>Consultando la familia de {anchorFirstName}…</span>
+        </div>
+      );
+    }
+
+    if (relation === "brother" || relation === "sister") {
+      if (parents.length === 0) {
+        return (
+          <Hint>
+            {anchorFirstName} aún no tiene padres registrados. Se creará un padre/madre provisional que
+            conecta a ambos hermanos; después puedes editarlo con su nombre real.
+          </Hint>
+        );
+      }
+      if (parents.length === 1) {
+        return <Hint>Se registrará como hijo/a de {parents[0].name}.</Hint>;
+      }
+      const options: { value: "both" | "maternal" | "paternal"; label: string; detail: string }[] = [
+        { value: "both", label: "Mismos padres", detail: parents.map((p) => p.name.split(" ")[0]).join(" y ") },
+        { value: "maternal", label: "Solo la misma mamá", detail: mother ? mother.name : "Medio hermano/a materno" },
+        { value: "paternal", label: "Solo el mismo papá", detail: father ? father.name : "Medio hermano/a paterno" },
+      ];
+      return (
+        <div className="space-y-1.5">
+          <span className={labelClass}>¿Comparten los mismos padres?</span>
+          {options.map((o) => (
+            <label
+              key={o.value}
+              className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer text-xs transition ${
+                siblingType === o.value ? "border-emerald-600 bg-emerald-950/30" : "border-neutral-800 hover:border-neutral-700"
+              }`}
+            >
+              <input
+                type="radio"
+                name="sibling_type_ui"
+                checked={siblingType === o.value}
+                onChange={() => setSiblingType(o.value)}
+                className="text-emerald-500 focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
+              />
+              <span className="font-medium text-white">{o.label}</span>
+              <span className="text-neutral-500 truncate">· {o.detail}</span>
+            </label>
+          ))}
+        </div>
+      );
+    }
+
+    if (relation === "father" || relation === "mother") {
+      const sameRole = parents.find((p) => p.gender === (relation === "father" ? "male" : "female"));
+      const otherParent = parents.find((p) => p.id !== sameRole?.id);
+      return (
+        <div className="space-y-2">
+          {sameRole && (
+            <Hint tone="warn">
+              {anchorFirstName} ya tiene registrado a <strong>{sameRole.name}</strong> como{" "}
+              {relation === "father" ? "padre" : "madre"}. Si es otra persona (por ejemplo, un padrastro o madrastra),
+              regístrala como <strong>pareja</strong> de {otherParent ? otherParent.name.split(" ")[0] : "su otro progenitor"}.
+            </Hint>
+          )}
+          {otherParent && (
+            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-neutral-800 cursor-pointer text-xs">
+              <input
+                type="checkbox"
+                checked={createUnion}
+                onChange={(e) => setCreateUnion(e.target.checked)}
+                className="mt-0.5 text-emerald-500 rounded focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
+              />
+              <span className="text-neutral-200">
+                Fue o es pareja de <strong className="text-white">{otherParent.name}</strong>
+                <span className="block text-[11px] text-neutral-500 mt-0.5">
+                  Déjalo sin marcar si solo comparten hijos.
+                </span>
+              </span>
+            </label>
+          )}
+        </div>
+      );
+    }
+
+    if (relation === "son" || relation === "daughter") {
+      if (coParents.length === 0) {
+        return (
+          <Hint>
+            Se registrará solo como hijo/a de {anchorFirstName}. Si después registras a su otro padre/madre,
+            podrás vincularlo desde la ficha del hijo/a.
+          </Hint>
+        );
+      }
+      return (
+        <div>
+          <label className={labelClass}>¿Quién es su otro padre/madre?</label>
+          <select value={coParentId} onChange={(e) => setCoParentChoice(e.target.value)} className={inputClass}>
+            {coParents.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.note ? ` (${p.note})` : ""}
+              </option>
+            ))}
+            <option value="none">Otra persona / aún no registrada</option>
+          </select>
+        </div>
+      );
+    }
+
+    // Pareja
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <span className={labelClass}>Tipo de unión</span>
+          <div className="flex gap-1.5">
+            <button type="button" onClick={() => setPartnerKind("spouse")} className={segmentClass(partnerKind === "spouse")}>
+              Casados
+            </button>
+            <button type="button" onClick={() => setPartnerKind("partner")} className={segmentClass(partnerKind === "partner")}>
+              Unión libre
+            </button>
+          </div>
+        </div>
+        <div>
+          <span className={labelClass}>Es</span>
+          <div className="flex gap-1.5">
+            <button type="button" onClick={() => setPartnerGender("male")} className={segmentClass(partnerGender === "male")}>
+              Hombre
+            </button>
+            <button type="button" onClick={() => setPartnerGender("female")} className={segmentClass(partnerGender === "female")}>
+              Mujer
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
       {triggerButton ? (
-        <div onClick={() => setIsOpen(true)}>{triggerButton}</div>
+        <div onClick={() => setInternalIsOpen(true)}>{triggerButton}</div>
       ) : (
         <button
-          onClick={() => setIsOpen(true)}
+          onClick={() => setInternalIsOpen(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-xs shadow-md shadow-emerald-700/20 transition hover:scale-[1.02]"
         >
           <UserPlus className="w-4 h-4" />
@@ -115,27 +317,27 @@ export function AddMemberModal({
       )}
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl max-h-[90vh] overflow-y-auto">
-            {/* Cerrar */}
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200"
+          onKeyDown={(e) => e.key === "Escape" && handleClose()}
+        >
+          <div className="relative w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-7 shadow-2xl max-h-[90vh] overflow-y-auto">
             <button
               onClick={handleClose}
+              aria-label="Cerrar"
               className="absolute top-5 right-5 text-neutral-400 hover:text-white p-1.5 rounded-lg hover:bg-neutral-800 transition"
             >
               <X className="w-4 h-4" />
             </button>
 
-            {/* Encabezado */}
-            <div className="flex items-center gap-3 mb-6">
+            <div className="flex items-center gap-3 mb-5">
               <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
                 <Users className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-white">
-                  Registrar Familiar en el Árbol
-                </h2>
+                <h2 className="text-lg font-bold text-white">Agregar familiar</h2>
                 <p className="text-xs text-neutral-400">
-                  Crea una ficha genealógica conectada a la red familiar.
+                  Familiar de <span className="text-emerald-400 font-semibold">{anchorName}</span>
                 </p>
               </div>
             </div>
@@ -148,297 +350,132 @@ export function AddMemberModal({
             )}
 
             {successToken ? (
-              /* Mensaje tras crear con token generado */
               <div className="space-y-4 text-center py-4">
                 <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto mb-2">
                   <CheckCircle2 className="w-6 h-6" />
                 </div>
-                <h3 className="font-bold text-base text-white">¡Familiar Registrado con Éxito!</h3>
+                <h3 className="font-bold text-base text-white">¡Familiar registrado!</h3>
                 <p className="text-xs text-neutral-400">
-                  Se generó un token criptográfico único para que tu familiar reclame esta ficha personal.
+                  Comparte este enlace para que tu familiar reclame su ficha.
                 </p>
 
-                <div className="p-3 bg-neutral-950 border border-neutral-800 rounded-xl text-left">
-                  <label className="block text-[11px] font-mono text-neutral-400 mb-1">
-                    Enlace de Reclamación Exclusivo
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={inviteUrl}
-                      className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-mono select-all focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => navigator.clipboard.writeText(inviteUrl)}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold whitespace-nowrap transition"
-                    >
-                      Copiar
-                    </button>
-                  </div>
-                </div>
-
-                <div className="pt-2">
+                <div className="flex items-center gap-2 p-3 bg-neutral-950 border border-neutral-800 rounded-xl">
+                  <input
+                    type="text"
+                    readOnly
+                    value={inviteUrl}
+                    className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-mono select-all focus:outline-none"
+                  />
                   <button
-                    onClick={handleClose}
-                    className="w-full py-2.5 px-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold transition"
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(inviteUrl)}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold whitespace-nowrap transition"
                   >
-                    Aceptar y Volver al Árbol
+                    Copiar
                   </button>
                 </div>
+
+                <button
+                  onClick={handleClose}
+                  className="w-full py-2.5 px-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold transition"
+                >
+                  Volver al árbol
+                </button>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Selector de Familiar de Referencia (Anchor) */}
-                {availableAnchors && availableAnchors.length > 0 && (
-                  <div className="p-3.5 bg-neutral-950/70 border border-neutral-800 rounded-2xl">
-                    <label className="block text-xs font-semibold text-neutral-200 mb-1 flex items-center justify-between">
-                      <span>Familiar de Referencia (Punto de anclaje)</span>
-                      <span className="text-[10px] text-emerald-400 font-mono">Modo Administrador</span>
-                    </label>
+              <form onSubmit={handleSubmit} className="space-y-5">
+                {/* 1. Respecto a quién */}
+                {availableAnchors && availableAnchors.length > 1 && (
+                  <div>
+                    <label className={labelClass}>Registrar respecto a</label>
                     <select
-                      value={anchorId || defaultAnchorId || availableAnchors[0]?.id}
-                      onChange={(e) => setAnchorId(e.target.value)}
-                      className="w-full bg-neutral-900 border border-neutral-700/80 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-emerald-500 transition"
+                      value={anchorId}
+                      onChange={(e) => {
+                        setSelectedAnchorId(e.target.value);
+                        setCoParentChoice(null);
+                      }}
+                      className={inputClass}
                     >
                       {availableAnchors.map((a) => (
                         <option key={a.id} value={a.id}>
-                          {a.name} {a.id === defaultAnchorId ? "(Seleccionado)" : ""}
+                          {a.name}
                         </option>
                       ))}
                     </select>
-                    <p className="text-[11px] text-neutral-400 mt-1.5">
-                      El parentesco se registrará en relación a: <strong className="text-white">{activeAnchorName}</strong>
-                    </p>
                   </div>
                 )}
 
-                {/* Parentesco respecto al anchor */}
-                <div>
-                  <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                    ¿Qué parentesco tiene con <span className="text-emerald-400 font-semibold">{activeAnchorName}</span>?
-                  </label>
-                  <select
-                    value={relationship}
-                    onChange={(e) => setRelationship(e.target.value as FamilyRelationshipType)}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition"
-                  >
-                    <option value="father">Padre de {activeAnchorName}</option>
-                    <option value="mother">Madre de {activeAnchorName}</option>
-                    <option value="son">Hijo de {activeAnchorName}</option>
-                    <option value="daughter">Hija de {activeAnchorName}</option>
-                    <option value="spouse">Cónyuge / Esposo(a) de {activeAnchorName}</option>
-                    <option value="partner">Pareja / Unión Libre de {activeAnchorName}</option>
-                    <option value="brother">Hermano de {activeAnchorName}</option>
-                    <option value="sister">Hermana de {activeAnchorName}</option>
-                  </select>
-
-                  {/* Selector contextual de Hermandad (Evita asunciones erróneas de progenitores) */}
-                  {(relationship === "brother" || relationship === "sister") && (
-                    <div className="mt-3 p-3.5 bg-neutral-900/80 border border-emerald-900/40 rounded-2xl space-y-2 animate-in fade-in">
-                      <span className="block text-xs font-semibold text-emerald-300">
-                        ¿Qué vínculo de hermandad comparten con {activeAnchorName}?
-                      </span>
-                      <div className="space-y-2 pt-1 text-xs">
-                        <label className="flex items-start gap-2.5 cursor-pointer text-neutral-200">
-                          <input
-                            type="radio"
-                            name="sibling_type_ui"
-                            value="both"
-                            checked={siblingType === "both"}
-                            onChange={() => setSiblingType("both")}
-                            className="mt-0.5 text-emerald-500 focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
-                          />
-                          <div>
-                            <span className="font-medium text-white">Hermano/a completo</span>
-                            <span className="block text-[11px] text-neutral-400">Comparte ambos progenitores (padre y madre biológicos).</span>
-                          </div>
-                        </label>
-                        <label className="flex items-start gap-2.5 cursor-pointer text-neutral-200">
-                          <input
-                            type="radio"
-                            name="sibling_type_ui"
-                            value="maternal"
-                            checked={siblingType === "maternal"}
-                            onChange={() => setSiblingType("maternal")}
-                            className="mt-0.5 text-emerald-500 focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
-                          />
-                          <div>
-                            <span className="font-medium text-white">Medio hermano/a materno</span>
-                            <span className="block text-[11px] text-neutral-400">Solo comparte la madre biológica (diferente padre).</span>
-                          </div>
-                        </label>
-                        <label className="flex items-start gap-2.5 cursor-pointer text-neutral-200">
-                          <input
-                            type="radio"
-                            name="sibling_type_ui"
-                            value="paternal"
-                            checked={siblingType === "paternal"}
-                            onChange={() => setSiblingType("paternal")}
-                            className="mt-0.5 text-emerald-500 focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
-                          />
-                          <div>
-                            <span className="font-medium text-white">Medio hermano/a paterno</span>
-                            <span className="block text-[11px] text-neutral-400">Solo comparte el padre biológico (diferente madre).</span>
-                          </div>
-                        </label>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Confirmación opcional de unión marital para Progenitores */}
-                  {(relationship === "father" || relationship === "mother") && (
-                    <div className="mt-3 p-3 bg-neutral-900/60 border border-neutral-800 rounded-2xl animate-in fade-in">
-                      <label className="flex items-start gap-2.5 cursor-pointer text-xs">
-                        <input
-                          type="checkbox"
-                          checked={createUnion}
-                          onChange={(e) => setCreateUnion(e.target.checked)}
-                          className="mt-0.5 text-emerald-500 rounded focus:ring-emerald-500 bg-neutral-950 border-neutral-700"
-                        />
-                        <div>
-                          <span className="font-medium text-neutral-200">
-                            Vincular como pareja/cónyuge del otro progenitor existente
-                          </span>
-                          <p className="text-[11px] text-neutral-400 mt-0.5 leading-relaxed">
-                            Si se deja desmarcado, se registrará únicamente como progenitor biológico sin forzar un matrimonio ni unión conyugal.
-                          </p>
-                        </div>
-                      </label>
-                    </div>
-                  )}
-                </div>
-
-                {/* Nombres y Apellidos Separados */}
+                {/* 2. Parentesco */}
                 <div className="space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                        Primer Nombre <span className="text-emerald-400">*</span>
-                      </label>
-                      <input
-                        name="first_name"
-                        type="text"
-                        required
-                        placeholder="Ej. Jorge"
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                        Segundo Nombre <span className="text-neutral-500">(Opcional)</span>
-                      </label>
-                      <input
-                        name="middle_name"
-                        type="text"
-                        placeholder="Ej. Luis"
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
-                      />
-                    </div>
+                  <span className={labelClass}>
+                    ¿Qué es de <span className="text-emerald-400 font-semibold">{anchorFirstName}</span>?
+                  </span>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {RELATION_OPTIONS.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => {
+                          setRelation(o.value);
+                          setError(null);
+                        }}
+                        className={`${segmentClass(relation === o.value)} ${o.value === "partner" ? "col-span-2" : ""}`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                        Apellido Paterno <span className="text-emerald-400">*</span>
-                      </label>
-                      <input
-                        name="last_name"
-                        type="text"
-                        required
-                        placeholder="Ej. Hernández"
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                        Apellido Materno <span className="text-neutral-500">(Opcional)</span>
-                      </label>
-                      <input
-                        name="maternal_last_name"
-                        type="text"
-                        placeholder="Ej. García"
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
-                      />
-                    </div>
-                  </div>
+                  {renderRelationDetails()}
                 </div>
 
-                {/* Género y Fecha de Nacimiento */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 3. Nombre completo */}
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                      Género
+                    <label className={labelClass}>
+                      Nombre <span className="text-emerald-400">*</span>
                     </label>
-                    <select
-                      name="gender"
-                      defaultValue={
-                        relationship === "mother" || relationship === "daughter" || relationship === "sister"
-                          ? "female"
-                          : relationship === "father" || relationship === "son" || relationship === "brother"
-                          ? "male"
-                          : "unknown"
-                      }
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition"
-                    >
-                      <option value="male">Masculino (♂ Azul)</option>
-                      <option value="female">Femenino (♀ Rosa)</option>
-                      <option value="other">Otro</option>
-                      <option value="unknown">Desconocido</option>
-                    </select>
+                    <input name="first_name" type="text" required placeholder="Ej. Jorge" className={inputClass} />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                      Fecha de Nacimiento
+                    <label className={labelClass}>Segundo nombre</label>
+                    <input name="middle_name" type="text" placeholder="Opcional" className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>
+                      Apellido paterno <span className="text-emerald-400">*</span>
                     </label>
-                    <input
-                      name="birth_date"
-                      type="date"
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition"
-                    />
+                    <input name="last_name" type="text" required placeholder="Ej. Hernández" className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Apellido materno</label>
+                    <input name="maternal_last_name" type="text" placeholder="Opcional" className={inputClass} />
                   </div>
                 </div>
 
-                {/* ¿Vive actualmente? */}
-                <div className="p-3 bg-neutral-950/60 border border-neutral-800 rounded-xl flex items-center justify-between">
+                {/* 4. Nacimiento y estado vital */}
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <div className="text-xs font-medium text-neutral-200">¿Vive actualmente?</div>
-                    <div className="text-[11px] text-neutral-500">
-                      {isLiving ? "Se podrá emitir invitación para reclamar ficha" : "Se registrará como ancestro/fallecido"}
+                    <label className={labelClass}>Fecha de nacimiento</label>
+                    <input name="birth_date" type="date" className={inputClass} />
+                  </div>
+                  <div>
+                    <span className={labelClass}>¿Vive?</span>
+                    <div className="flex gap-1.5">
+                      <button type="button" onClick={() => setIsLiving(true)} className={segmentClass(isLiving)}>
+                        Sí
+                      </button>
+                      <button type="button" onClick={() => setIsLiving(false)} className={segmentClass(!isLiving)}>
+                        No
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsLiving(true)}
-                      className={`text-xs px-2.5 py-1 rounded-lg font-medium transition ${
-                        isLiving
-                          ? "bg-emerald-600 text-white"
-                          : "bg-neutral-800 text-neutral-400 hover:text-white"
-                      }`}
-                    >
-                      Sí
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsLiving(false)}
-                      className={`text-xs px-2.5 py-1 rounded-lg font-medium transition ${
-                        !isLiving
-                          ? "bg-neutral-700 text-white"
-                          : "bg-neutral-800 text-neutral-400 hover:text-white"
-                      }`}
-                    >
-                      No
-                    </button>
-                  </div>
                 </div>
 
-                {/* Invitar inmediatamente si vive */}
+                {/* 5. Invitación opcional */}
                 {isLiving && (
                   <div>
-                    <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                      Correo para invitar ahora mismo <span className="text-neutral-500 font-normal">(Opcional)</span>
+                    <label className={labelClass}>
+                      Invitar por correo <span className="text-neutral-500 font-normal">(opcional)</span>
                     </label>
                     <div className="relative">
                       <Mail className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
@@ -446,32 +483,33 @@ export function AddMemberModal({
                         name="invite_email"
                         type="email"
                         placeholder="familiar@ejemplo.com"
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 pl-9 pr-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition"
+                        className={`${inputClass} pl-9`}
                       />
                     </div>
                   </div>
                 )}
 
-                {/* Botón de Enviar */}
-                <div className="pt-2">
-                  <button
-                    type="submit"
-                    disabled={isPending}
-                    className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-xs transition shadow-lg shadow-emerald-700/20 disabled:opacity-60"
-                  >
-                    {isPending ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Guardando en el Grafo...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Heart className="w-4 h-4" />
-                        <span>Guardar en Árbol Familiar</span>
-                      </>
-                    )}
-                  </button>
-                </div>
+                <button
+                  type="submit"
+                  disabled={isPending || !relation}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-xs transition shadow-lg shadow-emerald-700/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Guardando…</span>
+                    </>
+                  ) : relation ? (
+                    <>
+                      <UserPlus className="w-4 h-4" />
+                      <span>
+                        Guardar {RELATION_OPTIONS.find((o) => o.value === relation)!.label.toLowerCase()} de {anchorFirstName}
+                      </span>
+                    </>
+                  ) : (
+                    <span>Elige el parentesco para continuar</span>
+                  )}
+                </button>
               </form>
             )}
           </div>

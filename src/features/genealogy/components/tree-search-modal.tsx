@@ -15,11 +15,14 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { searchPersonsAction, type SearchPersonResult } from "../actions";
+import { formatFullName } from "../types";
 
 interface QuickMember {
   id: string;
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   gender: string;
   relationshipLabel?: string;
 }
@@ -198,7 +201,7 @@ export function TreeSearchModal({
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-semibold text-white truncate">
-                                {person.firstName} {person.lastName}
+                                {formatFullName(person)}
                               </span>
                               {isCenter && (
                                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
@@ -297,7 +300,7 @@ export function TreeSearchModal({
 
                         <div className="min-w-0">
                           <p className="text-xs font-semibold text-white truncate">
-                            {member.firstName} {member.lastName}
+                            {formatFullName(member)}
                           </p>
                           <p className="text-[10px] text-neutral-400 truncate">
                             {member.relationshipLabel || "Familiar"}

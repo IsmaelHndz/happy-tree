@@ -105,6 +105,19 @@ export function computeTreeLayout({
     }
   }
 
+  // Co-progenitores sin unión registrada (p. ej. el padre de un medio hermano) se tratan como pareja
+  // solo para el acomodo, para que queden contiguos y sus hijos cuelguen entre ambos.
+  for (const parents of parentsOf.values()) {
+    for (let i = 0; i < parents.length; i++) {
+      for (let j = i + 1; j < parents.length; j++) {
+        const [a, b] = [parents[i], parents[j]];
+        if (genOf(a) !== genOf(b)) continue;
+        push(partnersOf, a, b);
+        push(partnersOf, b, a);
+      }
+    }
+  }
+
   const getParents = (id: string) => parentsOf.get(id) ?? [];
   const getChildren = (id: string) => childrenOf.get(id) ?? [];
   const getPartners = (id: string) => partnersOf.get(id) ?? [];

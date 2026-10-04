@@ -5,6 +5,8 @@ import type { TreePermissionTier } from "../types";
 import { inferKinship, getConnectedFamilyIds } from "../utils/kinship-inference";
 import { partitionUnionsByIntegrity } from "../utils/graph-integrity";
 import { computeTreeLayout } from "../utils/tree-layout";
+import { isMissingColumnError, MISSING_NAME_COLUMNS_MESSAGE } from "../utils/db-errors";
+import { formatFullName } from "../types";
 
 /**
  * Consulta la base de datos y calcula la distribución espacial por generaciones del árbol familiar,
@@ -285,16 +287,6 @@ export async function getFamilyGraph(
     grandParentIds.push(...gps);
   }
 
-  // Parejas de abuelos
-  const grandParentSpouseIds: string[] = [];
-  grandParentIds.forEach((gpId) => {
-    const gpSpouses = [
-      ...treeVisibleUnions.filter((u) => u.person_a_id === gpId).map((u) => u.person_b_id),
-      ...treeVisibleUnions.filter((u) => u.person_b_id === gpId).map((u) => u.person_a_id),
-    ];
-    grandParentSpouseIds.push(...gpSpouses);
-  });
-
   // Parejas de hermanos
   const siblingSpouseIds: string[] = [];
   siblingIds.forEach((sibId) => {
@@ -370,7 +362,7 @@ export async function getFamilyGraph(
       ...siblingIds,
     ];
   } else if (isViewerGuest && viewerTier === "intermediate") {
-    // Nivel Intermedio: Familia de casa + extendida (Abuelos, Tíos, Primos, Sobrinos, Nietos, Parejas de tíos, Parejas de abuelos)
+    // Nivel Intermedio: Familia de casa + extendida (Abuelos, Tíos, Primos, Sobrinos, Nietos, Parejas de tíos)
     allowedNodeIds = [
       centerPersonId,
       ...parentIds,
@@ -378,7 +370,6 @@ export async function getFamilyGraph(
       ...spouseIds,
       ...siblingIds,
       ...grandParentIds,
-      ...grandParentSpouseIds,
       ...siblingSpouseIds,
       ...grandChildIds,
       ...uncleAuntIds,
@@ -392,7 +383,6 @@ export async function getFamilyGraph(
       centerPersonId,
       ...parentIds,
       ...grandParentIds,
-      ...grandParentSpouseIds,
       ...childIds,
       ...spouseIds,
       ...siblingIds,
@@ -403,6 +393,23 @@ export async function getFamilyGraph(
       ...cousinIds,
       ...nephewNieceIds,
     ];
+  }
+
+  // 8.1 Familias ensambladas (excepto nivel básico): completar cada núcleo familiar visible con
+  //   - los otros progenitores de hermanos, hijos, nietos, sobrinos y primos (p. ej. el padre de un medio hermano)
+  //   - las parejas de todas las personas visibles (padrastros, yernos/nueras, parejas de abuelos, etc.)
+  if (!(isViewerGuest && viewerTier === "basic")) {
+    const visible = new Set(allowedNodeIds);
+    const descendantLike = new Set([...siblingIds, ...childIds, ...grandChildIds, ...nephewNieceIds, ...cousinIds]);
+    allParentEdges?.forEach((e) => {
+      if (descendantLike.has(e.child_id) && visible.has(e.child_id)) visible.add(e.parent_id);
+    });
+    const withPartners = new Set(visible);
+    treeVisibleUnions.forEach((u) => {
+      if (visible.has(u.person_a_id)) withPartners.add(u.person_b_id);
+      if (visible.has(u.person_b_id)) withPartners.add(u.person_a_id);
+    });
+    allowedNodeIds = Array.from(withPartners);
   }
 
   const nodeIds = Array.from(new Set(allowedNodeIds));
@@ -433,6 +440,8 @@ export async function getFamilyGraph(
     .in("id", nodeIds);
 
   if (personsError || !personsWithNewCols) {
+    if (isMissingColumnError(personsError)) console.error(MISSING_NAME_COLUMNS_MESSAGE);
+    else console.error("getFamilyGraph: error consultando persons", personsError);
     const { data: fallbackPersons } = await supabase
       .from("persons")
       .select("id, first_name, last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
@@ -592,7 +601,7 @@ export async function getFamilyGraph(
       targetPersonId: p.id,
       targetGender: p.gender as Gender,
       parentEdges: allParentEdges ?? [],
-      unions: allUnions ?? [],
+      unions: treeVisibleUnions,
       personsMap,
     });
 
@@ -647,7 +656,7 @@ export async function getFamilyGraph(
       return {
         id: e.id,
         parentId: e.parent_id,
-        parentName: parentObj ? `${parentObj.firstName} ${parentObj.lastName}` : "Progenitor",
+        parentName: parentObj ? formatFullName(parentObj) : "Progenitor",
         relationshipType: e.relationship_type || "biological",
       };
     });
@@ -658,7 +667,7 @@ export async function getFamilyGraph(
       return {
         id: e.id,
         childId: e.child_id,
-        childName: childObj ? `${childObj.firstName} ${childObj.lastName}` : "Descendiente",
+        childName: childObj ? formatFullName(childObj) : "Descendiente",
         relationshipType: e.relationship_type || "biological",
       };
     });
@@ -760,7 +769,9 @@ export async function getFamilyGraph(
         {
           id: n.id,
           firstName: n.firstName,
+          middleName: n.middleName,
           lastName: n.lastName,
+          maternalLastName: n.maternalLastName,
           gender: n.gender,
           relationshipLabel: n.relationshipLabel || "Familiar",
         },
@@ -774,7 +785,9 @@ export async function getFamilyGraph(
     focusPerson: {
       id: centerPerson.id,
       firstName: centerPerson.first_name,
+      middleName: personsMap.get(centerPerson.id)?.middleName ?? null,
       lastName: centerPerson.last_name,
+      maternalLastName: personsMap.get(centerPerson.id)?.maternalLastName ?? null,
       gender: centerPerson.gender as Gender,
       relationshipLabel: isViewerGuest
         ? `Titular (${treeOwnerName || "Amigo"})`

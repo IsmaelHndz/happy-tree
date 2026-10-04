@@ -295,6 +295,14 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
 - **The Bug**: When creating a child in `createFamilyMemberAction`, the system queried all partners of the anchor and linked the new child to ALL of them. If the anchor had previous marriages or blended family partners, the child was falsely assigned to multiple co-parents.
 - **The Solution**: Only link automatically to a second parent if the anchor has exactly ONE confirmed active partner. If multiple partners exist or none exist, require `co_parent_id` or leave as a single-parent link until explicitly specified.
 
+### ⚠️ Pitfall 10: Silent Fallbacks Dropping Middle Names & Ghost Records
+- **The Bug**: `createFamilyMemberAction` / `updateFamilyMemberAction` retried any failed write *without* `middle_name` / `maternal_last_name`, so second names were silently lost. Edge inserts (`parent_child_edges`, `union_edges`) were not error-checked, leaving "ghost" persons that exist in `persons` but never render.
+- **The Solution**: Never retry writes without the name columns. `isMissingColumnError` (`utils/db-errors.ts`) returns a clear message pointing to migration `20261003000002`. Every edge insert is checked; on failure the new person is deleted (`rollback`) and the error is shown in the modal. `focusPerson`, `availableMembers` and search results carry `middleName`/`maternalLastName`; search matches each word against all four name columns.
+
+### ⚠️ Pitfall 11: Blended-Family Members Missing From the Canvas
+- **The Bug**: `allowedNodeIds` was a fixed list of categories, so step-parents, the other parent of a half-sibling, children's spouses and grandparents' new partners never appeared.
+- **The Solution**: For owner and `intermediate`/`advanced` views, `get-family-graph.ts` adds (8.1) the parents of every visible sibling/child/grandchild/nephew/cousin and the partners of every visible person. `tree-layout.ts` treats co-parents without a union as layout-only partners so they sit contiguous and their children hang between them (no heart is drawn). `inferKinship` labels them (`Padrastro`, `Expareja de tu madre`, `Padre de tu medio hermano/a`, `Yerno/Nuera`, `Pareja de tu abuela`).
+
 ---
 
 ## 7. How to Implement Common Tasks
@@ -307,6 +315,7 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
    - `'maternal'`: Links the new sibling strictly to the anchor's mother (maternal half-sibling).
    - `'paternal'`: Links the new sibling strictly to the anchor's father (paternal half-sibling).
 4. If adding a father/mother and the other parent already exists, pass `create_union: boolean` (defaults to `false`). Only create a union if explicitly checked by the user.
+   - If adding a son/daughter, `AddMemberModal` always sends `co_parent_id` (a person id, or `"none"` to skip auto-linking). Options come from `getAnchorContextAction(anchorId)` (anchor's parents, current/ex partners and other parents of their children).
 5. The server action creates the record in `persons` and the corresponding edges in `parent_child_edges` or `union_edges`.
 6. Call `revalidatePath('/tree')` and `revalidatePath('/')`.
 

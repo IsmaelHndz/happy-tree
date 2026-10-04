@@ -5,7 +5,74 @@ import { revalidatePath } from "next/cache";
 import { formatFullName, type FamilyMemberItem, type FamilyRelationshipType } from "./types";
 import type { Gender } from "@/types/database.types";
 import { inferKinship, getConnectedFamilyIds } from "./utils/kinship-inference";
+import { isMissingColumnError, MISSING_NAME_COLUMNS_MESSAGE } from "./utils/db-errors";
 import crypto from "crypto";
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * IDs de las parejas activas (no divorciadas ni separadas) de una persona.
+ */
+async function getActivePartnerIds(supabase: SupabaseServerClient, personId: string): Promise<string[]> {
+  const { data } = await supabase
+    .from("union_edges")
+    .select("person_a_id, person_b_id")
+    .or(`person_a_id.eq.${personId},person_b_id.eq.${personId}`)
+    .eq("status", "confirmed")
+    .not("union_type", "in", '("divorced","separated")');
+
+  return Array.from(
+    new Set((data ?? []).map((u) => (u.person_a_id === personId ? u.person_b_id : u.person_a_id)))
+  );
+}
+
+/**
+ * Componente conectado de la familia del usuario (mismas reglas de visibilidad que el árbol)
+ * más los titulares de árboles compartidos aprobados.
+ */
+async function getUserFamilyScope(
+  supabase: SupabaseServerClient,
+  userId: string,
+  userPersonId: string
+): Promise<Set<string>> {
+  const { data: allParentEdges } = await supabase
+    .from("parent_child_edges")
+    .select("parent_id, child_id");
+
+  const { data: allUnions } = await supabase
+    .from("union_edges")
+    .select("person_a_id, person_b_id, union_type, status");
+
+  const hasSharedChildren = (personA: string, personB: string): boolean => {
+    const kidsA = allParentEdges?.filter((e) => e.parent_id === personA).map((e) => e.child_id) ?? [];
+    const kidsB = allParentEdges?.filter((e) => e.parent_id === personB).map((e) => e.child_id) ?? [];
+    return kidsA.some((id) => kidsB.includes(id));
+  };
+
+  const treeVisibleUnions = (allUnions || []).filter((u) => {
+    if (u.status === "rejected") return false;
+    if (u.union_type === "separated" || u.union_type === "divorced") {
+      return hasSharedChildren(u.person_a_id, u.person_b_id);
+    }
+    return true;
+  });
+
+  const familySet = getConnectedFamilyIds(userPersonId, allParentEdges || [], treeVisibleUnions);
+
+  try {
+    const { data: shares } = await supabase
+      .from("tree_access_shares")
+      .select("granter_person_id")
+      .eq("requester_user_id", userId)
+      .eq("status", "approved");
+
+    shares?.forEach((s) => familySet.add(s.granter_person_id));
+  } catch {
+    // Ignorar si no existe la tabla
+  }
+
+  return familySet;
+}
 
 const RELATIONSHIP_LABELS: Record<FamilyRelationshipType, string> = {
   father: "Padre",
@@ -126,6 +193,8 @@ export async function getFamilyMembers(perspectivePersonId?: string): Promise<Fa
     .in("id", allFamilyIds);
 
   if (personsError || !personsWithNewCols) {
+    if (isMissingColumnError(personsError)) console.error(MISSING_NAME_COLUMNS_MESSAGE);
+    else console.error("getFamilyMembers: error consultando persons", personsError);
     const { data: fallbackPersons } = await supabase
       .from("persons")
       .select("id, first_name, last_name, maiden_name, gender, birth_date, death_date, is_living, birth_place, bio, is_claimed, created_by_user_id")
@@ -299,7 +368,10 @@ export async function createFamilyMemberAction(formData: FormData) {
   const relationship = (formData.get("relationship") as FamilyRelationshipType) || "father";
   const siblingType = (formData.get("sibling_type") as "both" | "maternal" | "paternal") || "both";
   const createUnion = formData.get("create_union") === "true";
-  const coParentId = (formData.get("co_parent_id") as string)?.trim() || null;
+  // co_parent_id = "none" significa que el usuario indicó explícitamente que el otro progenitor no está registrado
+  const coParentRaw = (formData.get("co_parent_id") as string)?.trim() || null;
+  const coParentId = coParentRaw && coParentRaw !== "none" ? coParentRaw : null;
+  const skipAutoCoParent = coParentRaw === "none";
   const inviteEmail = (formData.get("invite_email") as string)?.trim() || null;
 
   if (!firstName || !lastName) {
@@ -307,10 +379,7 @@ export async function createFamilyMemberAction(formData: FormData) {
   }
 
   // 1. Crear el nuevo nodo en persons (is_claimed = false)
-  let newPerson: { id: string } | null = null;
-  let personError: { message: string } | null = null;
-
-  const insertWithNewFields = await supabase
+  const { data: newPerson, error: personError } = await supabase
     .from("persons")
     .insert({
       first_name: firstName,
@@ -326,44 +395,37 @@ export async function createFamilyMemberAction(formData: FormData) {
     .select("id")
     .single();
 
-  if (insertWithNewFields.error) {
-    // Reintentar sin columnas nuevas si la migración aún no se ejecuta en la BD
-    const fallbackInsert = await supabase
-      .from("persons")
-      .insert({
-        first_name: firstName,
-        last_name: lastName,
-        gender,
-        birth_date: birthDate,
-        is_living: isLiving,
-        is_claimed: false,
-        created_by_user_id: user.id,
-      })
-      .select("id")
-      .single();
-
-    newPerson = fallbackInsert.data;
-    personError = fallbackInsert.error;
-  } else {
-    newPerson = insertWithNewFields.data;
-  }
-
   if (personError || !newPerson) {
+    // Nunca guardar en silencio sin el segundo nombre / apellido materno
+    if (isMissingColumnError(personError)) {
+      return { error: MISSING_NAME_COLUMNS_MESSAGE };
+    }
     return { error: `Error creando ficha familiar: ${personError?.message}` };
   }
 
   const newPersonId = newPerson.id;
 
-  // 2. Crear las aristas (Edges) según la relación
-  if (relationship === "father" || relationship === "mother") {
-    // 2.1 Vincular el nuevo padre/madre con la persona de referencia (anchor)
-    await supabase.from("parent_child_edges").insert({
-      parent_id: newPersonId,
-      child_id: currentPersonId,
+  // Si un vínculo falla (RLS o triggers de integridad), se elimina la ficha recién creada
+  // para no dejar personas "fantasma" que existen en la BD pero nunca aparecen en el árbol.
+  const rollback = async (message: string) => {
+    await supabase.from("persons").delete().eq("id", newPersonId);
+    return { error: message };
+  };
+
+  const linkParent = (parentId: string, childId: string) =>
+    supabase.from("parent_child_edges").insert({
+      parent_id: parentId,
+      child_id: childId,
       relationship_type: "biological",
       status: "confirmed",
       created_by_user_id: user.id,
     });
+
+  // 2. Crear las aristas (Edges) según la relación
+  if (relationship === "father" || relationship === "mother") {
+    // 2.1 Vincular el nuevo padre/madre con la persona de referencia (anchor)
+    const { error: edgeErr } = await linkParent(newPersonId, currentPersonId);
+    if (edgeErr) return rollback(`No se pudo vincular al progenitor: ${edgeErr.message}`);
 
     // 2.2 ÚNICAMENTE si el usuario confirmó explícitamente crear la unión matrimonial/pareja con el otro progenitor
     if (createUnion) {
@@ -372,81 +434,42 @@ export async function createFamilyMemberAction(formData: FormData) {
         .select("parent_id")
         .eq("child_id", currentPersonId);
 
-      if (existingParents && existingParents.length > 0) {
-        for (const ep of existingParents) {
-          if (ep.parent_id !== newPersonId) {
-            // Verificar si ya existe alguna unión entre ambos
-            const { data: existingUnion } = await supabase
-              .from("union_edges")
-              .select("id")
-              .or(`and(person_a_id.eq.${ep.parent_id},person_b_id.eq.${newPersonId}),and(person_a_id.eq.${newPersonId},person_b_id.eq.${ep.parent_id})`)
-              .maybeSingle();
+      for (const ep of existingParents ?? []) {
+        if (ep.parent_id === newPersonId) continue;
 
-            if (!existingUnion) {
-              await supabase.from("union_edges").insert({
-                person_a_id: ep.parent_id,
-                person_b_id: newPersonId,
-                union_type: "married",
-                status: "confirmed",
-                created_by_user_id: user.id,
-              });
-            }
-          }
+        const { data: existingUnion } = await supabase
+          .from("union_edges")
+          .select("id")
+          .or(`and(person_a_id.eq.${ep.parent_id},person_b_id.eq.${newPersonId}),and(person_a_id.eq.${newPersonId},person_b_id.eq.${ep.parent_id})`)
+          .maybeSingle();
+
+        if (!existingUnion) {
+          const { error: unionErr } = await supabase.from("union_edges").insert({
+            person_a_id: ep.parent_id,
+            person_b_id: newPersonId,
+            union_type: "married",
+            status: "confirmed",
+            created_by_user_id: user.id,
+          });
+          if (unionErr) return rollback(`No se pudo registrar la unión entre los progenitores: ${unionErr.message}`);
         }
       }
     }
   } else if (relationship === "son" || relationship === "daughter") {
-    // 2.4 Vincular el hijo con la persona de referencia
-    await supabase.from("parent_child_edges").insert({
-      parent_id: currentPersonId,
-      child_id: newPersonId,
-      relationship_type: "biological",
-      status: "confirmed",
-      created_by_user_id: user.id,
-    });
+    // 2.3 Vincular el hijo con la persona de referencia
+    const { error: edgeErr } = await linkParent(currentPersonId, newPersonId);
+    if (edgeErr) return rollback(`No se pudo vincular al hijo/a: ${edgeErr.message}`);
 
-    // Si se especificó un co-progenitor explícito, vincularlo
-    if (coParentId) {
-      await supabase.from("parent_child_edges").insert({
-        parent_id: coParentId,
-        child_id: newPersonId,
-        relationship_type: "biological",
-        status: "confirmed",
-        created_by_user_id: user.id,
-      });
-    } else {
-      // Buscar cónyuge/pareja activa (no divorciada ni separada)
-      const { data: spousesA } = await supabase
-        .from("union_edges")
-        .select("person_b_id, union_type")
-        .eq("person_a_id", currentPersonId)
-        .eq("status", "confirmed")
-        .not("union_type", "in", '("divorced","separated")');
+    // 2.4 Segundo progenitor: el indicado explícitamente, o la ÚNICA pareja activa (nunca varias)
+    let secondParentId = coParentId;
+    if (!secondParentId && !skipAutoCoParent) {
+      const activePartnerIds = await getActivePartnerIds(supabase, currentPersonId);
+      if (activePartnerIds.length === 1) secondParentId = activePartnerIds[0];
+    }
 
-      const { data: spousesB } = await supabase
-        .from("union_edges")
-        .select("person_a_id, union_type")
-        .eq("person_b_id", currentPersonId)
-        .eq("status", "confirmed")
-        .not("union_type", "in", '("divorced","separated")');
-
-      const spouseIds = [
-        ...(spousesA?.map((s) => s.person_b_id) ?? []),
-        ...(spousesB?.map((s) => s.person_a_id) ?? []),
-      ];
-
-      // SÓLO si la persona de referencia tiene exactamente UNA pareja activa conocida,
-      // se vincula automáticamente como segundo progenitor.
-      // Si tiene múltiples parejas o ninguna, NO adivinar ni vincular a múltiples cónyuges.
-      if (spouseIds.length === 1) {
-        await supabase.from("parent_child_edges").insert({
-          parent_id: spouseIds[0],
-          child_id: newPersonId,
-          relationship_type: "biological",
-          status: "confirmed",
-          created_by_user_id: user.id,
-        });
-      }
+    if (secondParentId && secondParentId !== currentPersonId) {
+      const { error: coErr } = await linkParent(secondParentId, newPersonId);
+      if (coErr) return rollback(`No se pudo vincular al otro progenitor: ${coErr.message}`);
     }
   } else if (relationship === "spouse" || relationship === "partner") {
     const { error: unionErr } = await supabase.from("union_edges").insert({
@@ -457,12 +480,7 @@ export async function createFamilyMemberAction(formData: FormData) {
       created_by_user_id: user.id,
     });
 
-    if (unionErr) {
-      return {
-        success: false,
-        error: `Error al vincular cónyuge/pareja: ${unionErr.message || JSON.stringify(unionErr)}`,
-      };
-    }
+    if (unionErr) return rollback(`Error al vincular cónyuge/pareja: ${unionErr.message}`);
   } else if (relationship === "brother" || relationship === "sister") {
     // Buscar los padres de la persona ancla junto con su género para afinar el tipo de hermandad
     const { data: parentsData } = await supabase
@@ -471,65 +489,38 @@ export async function createFamilyMemberAction(formData: FormData) {
       .eq("child_id", currentPersonId);
 
     if (parentsData && parentsData.length > 0) {
-      let targetParentsToLink: string[] = [];
+      const parentGender = (pe: (typeof parentsData)[number]) => {
+        const p = Array.isArray(pe.persons) ? pe.persons[0] : pe.persons;
+        return (p as { gender?: string } | null)?.gender;
+      };
 
+      let targetParentsToLink: string[];
       if (siblingType === "maternal") {
-        const motherEdge = parentsData.find((pe) => {
-          const p = Array.isArray(pe.persons) ? pe.persons[0] : pe.persons;
-          return (p as { gender?: string } | null)?.gender === "female";
-        });
-        if (motherEdge) {
-          targetParentsToLink.push(motherEdge.parent_id);
-        } else {
-          targetParentsToLink.push(parentsData[0].parent_id);
-        }
+        const motherEdge = parentsData.find((pe) => parentGender(pe) === "female") ?? parentsData[0];
+        targetParentsToLink = [motherEdge.parent_id];
       } else if (siblingType === "paternal") {
-        const fatherEdge = parentsData.find((pe) => {
-          const p = Array.isArray(pe.persons) ? pe.persons[0] : pe.persons;
-          return (p as { gender?: string } | null)?.gender === "male";
-        });
-        if (fatherEdge) {
-          targetParentsToLink.push(fatherEdge.parent_id);
-        } else {
-          targetParentsToLink.push(parentsData[parentsData.length - 1].parent_id);
-        }
+        const fatherEdge = parentsData.find((pe) => parentGender(pe) === "male") ?? parentsData[parentsData.length - 1];
+        targetParentsToLink = [fatherEdge.parent_id];
       } else {
         // "both" (hermano completo)
         targetParentsToLink = parentsData.map((pe) => pe.parent_id);
       }
 
       for (const parentId of targetParentsToLink) {
-        await supabase.from("parent_child_edges").insert({
-          parent_id: parentId,
-          child_id: newPersonId,
-          relationship_type: "biological",
-          status: "confirmed",
-          created_by_user_id: user.id,
-        });
+        const { error: edgeErr } = await linkParent(parentId, newPersonId);
+        if (edgeErr) return rollback(`No se pudo vincular al hermano/a con su progenitor: ${edgeErr.message}`);
       }
     } else {
       // Si la persona de referencia no tiene padres registrados aún:
-      // Creamos un nodo de linaje/progenitor común para que ambos hermanos queden conectados en el árbol
-      let anchorPerson: { first_name: string; last_name: string; maternal_last_name?: string | null } | null = null;
-      const { data: anchorData, error: anchorErr } = await supabase
+      // Creamos un nodo de progenitor provisional para que ambos hermanos queden conectados en el árbol
+      const { data: anchorPerson } = await supabase
         .from("persons")
-        .select("first_name, last_name, maternal_last_name")
+        .select("first_name, last_name")
         .eq("id", currentPersonId)
         .maybeSingle();
 
-      if (anchorErr || !anchorData) {
-        const { data: fallbackAnchor } = await supabase
-          .from("persons")
-          .select("first_name, last_name")
-          .eq("id", currentPersonId)
-          .maybeSingle();
-        anchorPerson = fallbackAnchor;
-      } else {
-        anchorPerson = anchorData;
-      }
-
       const lineageLastName = anchorPerson?.last_name || lastName || "Linaje Familiar";
-      const { data: sharedParent } = await supabase
+      const { data: sharedParent, error: sharedErr } = await supabase
         .from("persons")
         .insert({
           first_name: "Progenitor/a",
@@ -537,29 +528,36 @@ export async function createFamilyMemberAction(formData: FormData) {
           gender: "unknown",
           is_living: true,
           is_claimed: false,
-          bio: `Nodo de linaje ancestral común creado para conectar a ${anchorPerson?.first_name ?? "familiar"} con su hermano/a ${firstName}. Puedes editar este nodo para registrar el nombre real de tu abuelo/a.`,
+          bio: `Nodo provisional creado para conectar a ${anchorPerson?.first_name ?? "familiar"} con su hermano/a ${firstName}. Edítalo para registrar el nombre real del padre o la madre.`,
           created_by_user_id: user.id,
         })
         .select("id")
         .single();
 
-      if (sharedParent) {
-        await supabase.from("parent_child_edges").insert([
-          {
-            parent_id: sharedParent.id,
-            child_id: currentPersonId,
-            relationship_type: "biological",
-            status: "confirmed",
-            created_by_user_id: user.id,
-          },
-          {
-            parent_id: sharedParent.id,
-            child_id: newPersonId,
-            relationship_type: "biological",
-            status: "confirmed",
-            created_by_user_id: user.id,
-          },
-        ]);
+      if (sharedErr || !sharedParent) {
+        return rollback(`No se pudo crear el progenitor provisional: ${sharedErr?.message}`);
+      }
+
+      const { error: edgesErr } = await supabase.from("parent_child_edges").insert([
+        {
+          parent_id: sharedParent.id,
+          child_id: currentPersonId,
+          relationship_type: "biological",
+          status: "confirmed",
+          created_by_user_id: user.id,
+        },
+        {
+          parent_id: sharedParent.id,
+          child_id: newPersonId,
+          relationship_type: "biological",
+          status: "confirmed",
+          created_by_user_id: user.id,
+        },
+      ]);
+
+      if (edgesErr) {
+        await supabase.from("persons").delete().eq("id", sharedParent.id);
+        return rollback(`No se pudo conectar a los hermanos: ${edgesErr.message}`);
       }
     }
   }
@@ -689,26 +687,11 @@ export async function updateFamilyMemberAction(formData: FormData) {
     .eq("id", personId);
 
   if (updateError) {
-    // Si falló por falta de columnas nuevas en la base de datos, reintentar con las columnas estándar
-    const { error: fallbackError } = await supabase
-      .from("persons")
-      .update({
-        first_name: firstName,
-        last_name: lastName,
-        maiden_name: maidenName,
-        gender,
-        birth_date: birthDate,
-        death_date: deathDate,
-        is_living: isLiving,
-        birth_place: birthPlace,
-        bio,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", personId);
-
-    if (fallbackError) {
-      return { error: `Error al actualizar la ficha: ${fallbackError.message}` };
+    // Nunca guardar en silencio sin el segundo nombre / apellido materno
+    if (isMissingColumnError(updateError)) {
+      return { error: MISSING_NAME_COLUMNS_MESSAGE };
     }
+    return { error: `Error al actualizar la ficha: ${updateError.message}` };
   }
 
   revalidatePath("/");
@@ -985,6 +968,114 @@ export async function dissolveUnionAction({
   };
 }
 
+export interface AnchorRelative {
+  id: string;
+  name: string;
+  gender: Gender;
+  note?: string;
+}
+
+export interface AnchorContext {
+  parents: AnchorRelative[];
+  coParents: AnchorRelative[];
+  defaultCoParentId: string | null;
+}
+
+/**
+ * Contexto del familiar ancla para el modal de registro:
+ * - parents: sus progenitores registrados (para hermanos y para el segundo padre/madre).
+ * - coParents: parejas actuales, exparejas y otros progenitores de sus hijos (para elegir con quién tuvo un hijo).
+ * - defaultCoParentId: la única pareja activa, si existe exactamente una.
+ */
+export async function getAnchorContextAction(anchorId: string): Promise<AnchorContext & { error?: string }> {
+  const empty: AnchorContext = { parents: [], coParents: [], defaultCoParentId: null };
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user || !anchorId) return { ...empty, error: "Debes estar autenticado." };
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("person_id, is_user_zero")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile?.is_user_zero) {
+    if (!profile?.person_id) return empty;
+    const familySet = await getUserFamilyScope(supabase, user.id, profile.person_id);
+    if (!familySet.has(anchorId)) return empty;
+  }
+
+  const [{ data: parentEdges }, { data: childEdges }, { data: unions }] = await Promise.all([
+    supabase.from("parent_child_edges").select("parent_id").eq("child_id", anchorId),
+    supabase.from("parent_child_edges").select("child_id").eq("parent_id", anchorId),
+    supabase
+      .from("union_edges")
+      .select("person_a_id, person_b_id, union_type, status")
+      .or(`person_a_id.eq.${anchorId},person_b_id.eq.${anchorId}`)
+      .neq("status", "rejected"),
+  ]);
+
+  const parentIds = Array.from(new Set((parentEdges ?? []).map((e) => e.parent_id)));
+  const childIds = (childEdges ?? []).map((e) => e.child_id);
+
+  // Otros progenitores de los hijos ya registrados (co-progenitores aunque no exista unión)
+  let otherParentIds: string[] = [];
+  if (childIds.length > 0) {
+    const { data: coEdges } = await supabase
+      .from("parent_child_edges")
+      .select("parent_id")
+      .in("child_id", childIds)
+      .neq("parent_id", anchorId);
+    otherParentIds = (coEdges ?? []).map((e) => e.parent_id);
+  }
+
+  const partnerNotes = new Map<string, string>();
+  const activePartnerIds: string[] = [];
+  (unions ?? []).forEach((u) => {
+    const partnerId = u.person_a_id === anchorId ? u.person_b_id : u.person_a_id;
+    const isEx = u.union_type === "divorced" || u.union_type === "separated";
+    partnerNotes.set(partnerId, isEx ? "Expareja" : "Pareja actual");
+    if (!isEx) activePartnerIds.push(partnerId);
+  });
+  otherParentIds.forEach((id) => {
+    if (!partnerNotes.has(id)) partnerNotes.set(id, "Otro progenitor de sus hijos");
+  });
+
+  const allIds = Array.from(new Set([...parentIds, ...partnerNotes.keys()]));
+  if (allIds.length === 0) return empty;
+
+  // select("*") para no fallar si las columnas de segundo nombre aún no existen
+  const { data: persons } = await supabase.from("persons").select("*").in("id", allIds);
+  const toRelative = (id: string, note?: string): AnchorRelative | null => {
+    const p = persons?.find((x) => x.id === id);
+    if (!p) return null;
+    return {
+      id,
+      name: formatFullName({
+        firstName: p.first_name,
+        middleName: p.middle_name,
+        lastName: p.last_name,
+        maternalLastName: p.maternal_last_name,
+      }),
+      gender: p.gender as Gender,
+      note,
+    };
+  };
+
+  const uniqueActive = Array.from(new Set(activePartnerIds));
+
+  return {
+    parents: parentIds.map((id) => toRelative(id)).filter((r): r is AnchorRelative => r !== null),
+    coParents: Array.from(partnerNotes.entries())
+      .map(([id, note]) => toRelative(id, note))
+      .filter((r): r is AnchorRelative => r !== null),
+    defaultCoParentId: uniqueActive.length === 1 ? uniqueActive[0] : null,
+  };
+}
+
 /**
  * Consulta la lista de todas las personas registradas para usarlas como familiares de referencia (Anchors).
  */
@@ -1007,7 +1098,9 @@ export async function getAvailableAnchors(): Promise<{ id: string; name: string 
 export interface SearchPersonResult {
   id: string;
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   gender: Gender;
   birthDate: string | null;
   isClaimed: boolean;
@@ -1046,42 +1139,7 @@ export async function searchPersonsAction(
 
   let allowedPersonIds: string[] | null = null;
   if (!isUserZero && userPersonId) {
-    const { data: allParentEdges } = await supabase
-      .from("parent_child_edges")
-      .select("parent_id, child_id");
-
-    const { data: allUnions } = await supabase
-      .from("union_edges")
-      .select("person_a_id, person_b_id, union_type, status");
-
-    const hasSharedChildren = (personA: string, personB: string): boolean => {
-      const kidsA = allParentEdges?.filter((e) => e.parent_id === personA).map((e) => e.child_id) ?? [];
-      const kidsB = allParentEdges?.filter((e) => e.parent_id === personB).map((e) => e.child_id) ?? [];
-      return kidsA.some((id) => kidsB.includes(id));
-    };
-
-    const treeVisibleUnions = (allUnions || []).filter((u) => {
-      if (u.status === "rejected") return false;
-      if (u.union_type === "separated" || u.union_type === "divorced") {
-        return hasSharedChildren(u.person_a_id, u.person_b_id);
-      }
-      return true;
-    });
-
-    const familySet = getConnectedFamilyIds(userPersonId, allParentEdges || [], treeVisibleUnions);
-
-    try {
-      const { data: shares } = await supabase
-        .from("tree_access_shares")
-        .select("granter_person_id")
-        .eq("requester_user_id", user.id)
-        .eq("status", "approved");
-
-      shares?.forEach((s) => familySet.add(s.granter_person_id));
-    } catch {
-      // Ignorar si no existe la tabla
-    }
-
+    const familySet = await getUserFamilyScope(supabase, user.id, userPersonId);
     allowedPersonIds = Array.from(familySet);
     if (allowedPersonIds.length === 0) {
       return { results: [] };
@@ -1098,7 +1156,7 @@ export async function searchPersonsAction(
 
     const { data: personById, error: idError } = await supabase
       .from("persons")
-      .select("id, first_name, last_name, gender, birth_date, is_claimed")
+      .select("*")
       .eq("id", query)
       .maybeSingle();
 
@@ -1112,7 +1170,9 @@ export async function searchPersonsAction(
           {
             id: personById.id,
             firstName: personById.first_name,
+            middleName: personById.middle_name,
             lastName: personById.last_name,
+            maternalLastName: personById.maternal_last_name,
             gender: personById.gender as Gender,
             birthDate: personById.birth_date,
             isClaimed: personById.is_claimed,
@@ -1123,22 +1183,27 @@ export async function searchPersonsAction(
     }
   }
 
-  // 2. Búsqueda por texto en Nombre o Apellidos
-  const terms = query.split(/\s+/).filter(Boolean);
+  // 2. Búsqueda por texto: cada palabra debe coincidir con algún nombre o apellido
+  //    (así "Jorge Andrés" encuentra a quien tiene "Andrés" como segundo nombre)
+  const terms = query
+    .split(/\s+/)
+    .map((t) => t.replace(/[,()%*]/g, ""))
+    .filter(Boolean)
+    .slice(0, 4);
+  if (terms.length === 0) return { results: [] };
+
   let queryBuilder = supabase
     .from("persons")
-    .select("id, first_name, last_name, gender, birth_date, is_claimed")
+    .select("id, first_name, middle_name, last_name, maternal_last_name, gender, birth_date, is_claimed")
     .limit(10);
 
   if (allowedPersonIds) {
     queryBuilder = queryBuilder.in("id", allowedPersonIds);
   }
 
-  if (terms.length === 1) {
-    queryBuilder = queryBuilder.or(`first_name.ilike.%${terms[0]}%,last_name.ilike.%${terms[0]}%`);
-  } else {
+  for (const term of terms) {
     queryBuilder = queryBuilder.or(
-      `and(first_name.ilike.%${terms[0]}%,last_name.ilike.%${terms[1]}%),first_name.ilike.%${query}%,last_name.ilike.%${query}%`
+      `first_name.ilike.%${term}%,middle_name.ilike.%${term}%,last_name.ilike.%${term}%,maternal_last_name.ilike.%${term}%`
     );
   }
 
@@ -1152,7 +1217,9 @@ export async function searchPersonsAction(
     results: (personsByName || []).map((p) => ({
       id: p.id,
       firstName: p.first_name,
+      middleName: p.middle_name,
       lastName: p.last_name,
+      maternalLastName: p.maternal_last_name,
       gender: p.gender as Gender,
       birthDate: p.birth_date,
       isClaimed: p.is_claimed,

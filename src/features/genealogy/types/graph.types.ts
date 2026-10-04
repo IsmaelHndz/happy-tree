@@ -59,7 +59,9 @@ export interface TreeEdgeData {
 export interface FocusPersonInfo {
   id: string;
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   gender: Gender;
   relationshipLabel: string;
   isSelf: boolean;
@@ -68,7 +70,9 @@ export interface FocusPersonInfo {
 export interface AvailableMemberOption {
   id: string;
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   gender: Gender;
   relationshipLabel: string;
 }

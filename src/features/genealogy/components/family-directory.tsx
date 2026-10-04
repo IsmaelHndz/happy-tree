@@ -312,6 +312,7 @@ export function FamilyDirectory({
       {/* Modal de Edición Dinámico */}
       {activeEditMember && (
         <EditMemberModal
+          key={activeEditMember.id}
           member={activeEditMember}
           availableFamilyMembers={members.map((m) => ({
             id: m.id,
