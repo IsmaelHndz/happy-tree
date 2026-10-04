@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import type { AuthActionState, InvitationDetails, UserZeroStatus } from "./types";
 import type { Gender } from "@/types/database.types";
 
@@ -272,4 +273,43 @@ export async function claimProfileWithTokenAction(
 
   revalidatePath("/", "layout");
   redirect("/");
+}
+
+/**
+ * Server Action: Solicitar enlace seguro de restablecimiento de contraseña vía correo electrónico.
+ */
+export async function requestPasswordResetAction(
+  email: string
+): Promise<{ success?: boolean; error?: string; message?: string }> {
+  const cleanEmail = email?.trim().toLowerCase();
+
+  if (!cleanEmail || !cleanEmail.includes("@")) {
+    return { error: "Por favor ingresa un correo electrónico válido." };
+  }
+
+  const supabase = await createClient();
+  const headersList = await headers();
+  const host = headersList.get("x-forwarded-host") || headersList.get("host") || "localhost:3000";
+  const protocol = headersList.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
+  const origin = `${protocol}://${host}`;
+
+  const redirectTo = `${origin}/auth/callback?next=/reset-password`;
+
+  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+    redirectTo,
+  });
+
+  if (error) {
+    if (error.message.toLowerCase().includes("rate limit") || (error as { status?: number }).status === 429) {
+      return {
+        error: "Has solicitado demasiados enlaces de recuperación recientemente. Por seguridad, espera unos minutos.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  return {
+    success: true,
+    message: `Si existe una cuenta asociada a ${cleanEmail}, se ha enviado un correo con el enlace seguro para restablecer tu contraseña.`,
+  };
 }
