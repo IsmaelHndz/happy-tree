@@ -3,7 +3,9 @@ import type { Gender } from "@/types/database.types";
 export interface TreeNodeData {
   id: string;
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   maidenName?: string | null;
   gender: Gender;
   birthDate: string | null;

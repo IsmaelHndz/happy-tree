@@ -13,7 +13,9 @@ export type FamilyRelationshipType =
 export interface FamilyMemberItem {
   id: string;
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   maidenName?: string | null;
   gender: Gender;
   birthDate: string | null;
@@ -53,7 +55,9 @@ export interface UpdateUnionInput {
 export interface UpdateFamilyMemberInput {
   personId: string;
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   maidenName?: string | null;
   gender: Gender;
   birthDate?: string | null;
@@ -65,7 +69,9 @@ export interface UpdateFamilyMemberInput {
 
 export interface CreateFamilyMemberInput {
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   gender: Gender;
   birthDate?: string | null;
   isLiving: boolean;
@@ -79,3 +85,19 @@ export interface CreateMemberResult {
   personId?: string;
   invitationToken?: string | null;
 }
+
+/**
+ * Formatea el nombre completo respetando la estructura hispana / latina:
+ * [Primer Nombre] [Segundo Nombre] [Apellido Paterno] [Apellido Materno]
+ */
+export function formatFullName(person: {
+  firstName: string;
+  middleName?: string | null;
+  lastName: string;
+  maternalLastName?: string | null;
+}): string {
+  return [person.firstName, person.middleName, person.lastName, person.maternalLastName]
+    .filter(Boolean)
+    .join(" ");
+}
+

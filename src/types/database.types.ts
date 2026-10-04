@@ -19,7 +19,9 @@ export interface Database {
         Row: {
           id: string;
           first_name: string;
+          middle_name: string | null;
           last_name: string;
+          maternal_last_name: string | null;
           maiden_name: string | null;
           gender: Gender;
           birth_date: string | null;
@@ -38,7 +40,9 @@ export interface Database {
         Insert: {
           id?: string;
           first_name: string;
+          middle_name?: string | null;
           last_name: string;
+          maternal_last_name?: string | null;
           maiden_name?: string | null;
           gender?: Gender;
           birth_date?: string | null;
@@ -57,7 +61,9 @@ export interface Database {
         Update: {
           id?: string;
           first_name?: string;
+          middle_name?: string | null;
           last_name?: string;
+          maternal_last_name?: string | null;
           maiden_name?: string | null;
           gender?: Gender;
           birth_date?: string | null;
