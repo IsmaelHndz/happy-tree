@@ -449,13 +449,20 @@ export async function createFamilyMemberAction(formData: FormData) {
       }
     }
   } else if (relationship === "spouse" || relationship === "partner") {
-    await supabase.from("union_edges").insert({
+    const { error: unionErr } = await supabase.from("union_edges").insert({
       person_a_id: currentPersonId,
       person_b_id: newPersonId,
       union_type: relationship === "spouse" ? "married" : "partner",
       status: "confirmed",
       created_by_user_id: user.id,
     });
+
+    if (unionErr) {
+      return {
+        success: false,
+        error: `Error al vincular cónyuge/pareja: ${unionErr.message || JSON.stringify(unionErr)}`,
+      };
+    }
   } else if (relationship === "brother" || relationship === "sister") {
     // Buscar los padres de la persona ancla junto con su género para afinar el tipo de hermandad
     const { data: parentsData } = await supabase

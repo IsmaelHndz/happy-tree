@@ -285,6 +285,16 @@ export async function getFamilyGraph(
     grandParentIds.push(...gps);
   }
 
+  // Parejas de abuelos
+  const grandParentSpouseIds: string[] = [];
+  grandParentIds.forEach((gpId) => {
+    const gpSpouses = [
+      ...treeVisibleUnions.filter((u) => u.person_a_id === gpId).map((u) => u.person_b_id),
+      ...treeVisibleUnions.filter((u) => u.person_b_id === gpId).map((u) => u.person_a_id),
+    ];
+    grandParentSpouseIds.push(...gpSpouses);
+  });
+
   // Parejas de hermanos
   const siblingSpouseIds: string[] = [];
   siblingIds.forEach((sibId) => {
@@ -360,7 +370,7 @@ export async function getFamilyGraph(
       ...siblingIds,
     ];
   } else if (isViewerGuest && viewerTier === "intermediate") {
-    // Nivel Intermedio: Familia de casa + extendida (Abuelos, Tíos, Primos, Sobrinos, Nietos, Parejas de tíos)
+    // Nivel Intermedio: Familia de casa + extendida (Abuelos, Tíos, Primos, Sobrinos, Nietos, Parejas de tíos, Parejas de abuelos)
     allowedNodeIds = [
       centerPersonId,
       ...parentIds,
@@ -368,6 +378,7 @@ export async function getFamilyGraph(
       ...spouseIds,
       ...siblingIds,
       ...grandParentIds,
+      ...grandParentSpouseIds,
       ...siblingSpouseIds,
       ...grandChildIds,
       ...uncleAuntIds,
@@ -381,6 +392,7 @@ export async function getFamilyGraph(
       centerPersonId,
       ...parentIds,
       ...grandParentIds,
+      ...grandParentSpouseIds,
       ...childIds,
       ...spouseIds,
       ...siblingIds,
