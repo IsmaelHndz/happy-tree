@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { FamilyGraphData, TreeNodeData, TreeEdgeData, AccessibleTreeOption } from "../types/graph.types";
 import type { Gender } from "@/types/database.types";
 import type { TreePermissionTier } from "../types";
-import { inferKinship } from "../utils/kinship-inference";
+import { inferKinship, getConnectedFamilyIds } from "../utils/kinship-inference";
 
 /**
  * Consulta la base de datos y calcula la distribución espacial por generaciones del árbol familiar,
@@ -141,43 +141,11 @@ export async function getFamilyGraph(
     }
   }
 
-  // 4. Determinar el nodo central del árbol (Focus Person)
-  let centerPersonId =
-    focusPersonId && focusPersonId.trim().length > 0
-      ? focusPersonId.trim()
-      : isViewerGuest && defaultFriendPersonId
-      ? defaultFriendPersonId
-      : userPersonId;
-
-  let { data: centerPerson } = await supabase
-    .from("persons")
-    .select("id, first_name, last_name, gender, birth_date, is_living, is_claimed")
-    .eq("id", centerPersonId)
-    .maybeSingle();
-
-  if (!centerPerson) {
-    centerPersonId = isViewerGuest && defaultFriendPersonId ? defaultFriendPersonId : userPersonId;
-    const { data: fallbackPerson } = await supabase
-      .from("persons")
-      .select("id, first_name, last_name, gender, birth_date, is_living, is_claimed")
-      .eq("id", centerPersonId)
-      .single();
-    centerPerson = fallbackPerson;
-  }
-
-  if (!centerPerson) {
-    return {
-      ...emptyResult,
-      accessibleTrees,
-    };
-  }
-
-  // 5. Consultar todas las aristas verticales (padres e hijos)
+  // 4. Consultar todas las aristas verticales (padres e hijos) y uniones conyugales
   const { data: allParentEdges } = await supabase
     .from("parent_child_edges")
     .select("id, parent_id, child_id, relationship_type");
 
-  // 6. Consultar todas las uniones conyugales
   const { data: allUnions } = await supabase
     .from("union_edges")
     .select("id, person_a_id, person_b_id, union_type, status");
@@ -205,6 +173,72 @@ export async function getFamilyGraph(
   };
 
   const treeVisibleUnions = allUnions?.filter(isUnionVisibleInTree) ?? [];
+
+  // Red familiar propia del usuario activo (componente conectado)
+  const userFamilyIds = getConnectedFamilyIds(
+    userPersonId,
+    allParentEdges ?? [],
+    treeVisibleUnions
+  );
+
+  // 5. Determinar el nodo central del árbol (Focus Person) y validar autorización estricta
+  let centerPersonId = userPersonId;
+
+  if (isViewerGuest && defaultFriendPersonId) {
+    centerPersonId =
+      focusPersonId && focusPersonId.trim().length > 0
+        ? focusPersonId.trim()
+        : defaultFriendPersonId;
+  } else if (focusPersonId && focusPersonId.trim().length > 0) {
+    const reqFocus = focusPersonId.trim();
+
+    if (isUserZero) {
+      // Usuario Cero (Administrador) puede auditar cualquier persona de la plataforma
+      centerPersonId = reqFocus;
+    } else if (userFamilyIds.has(reqFocus)) {
+      // Usuario regular navegando por un familiar dentro de su propio árbol
+      centerPersonId = reqFocus;
+    } else {
+      // Si la persona solicitada pertenece a un árbol de amigos compartido aprobado
+      const matchingShare = accessibleTrees.find(
+        (t) => t.targetPersonId === reqFocus || t.targetUserId === reqFocus
+      );
+
+      if (matchingShare) {
+        isViewerGuest = true;
+        viewerTier = matchingShare.tier;
+        treeOwnerName = matchingShare.ownerName;
+        centerPersonId = reqFocus;
+      } else {
+        // ACCESO DENEGADO A ÁRBOL AJENO SIN PERMISO:
+        // Evitar que usuarios externos vean árboles a los que no tienen autorización concedida
+        centerPersonId = userPersonId;
+      }
+    }
+  }
+
+  let { data: centerPerson } = await supabase
+    .from("persons")
+    .select("id, first_name, last_name, gender, birth_date, is_living, is_claimed")
+    .eq("id", centerPersonId)
+    .maybeSingle();
+
+  if (!centerPerson) {
+    centerPersonId = isViewerGuest && defaultFriendPersonId ? defaultFriendPersonId : userPersonId;
+    const { data: fallbackPerson } = await supabase
+      .from("persons")
+      .select("id, first_name, last_name, gender, birth_date, is_living, is_claimed")
+      .eq("id", centerPersonId)
+      .single();
+    centerPerson = fallbackPerson;
+  }
+
+  if (!centerPerson) {
+    return {
+      ...emptyResult,
+      accessibleTrees,
+    };
+  }
 
   // 7. Identificar relaciones directas respecto al nodo central (centerPersonId)
   const parentIds = allParentEdges?.filter((e) => e.child_id === centerPersonId).map((e) => e.parent_id) ?? [];

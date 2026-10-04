@@ -115,28 +115,33 @@ export default async function Home({ searchParams }: HomeProps) {
 
     if (profile?.person_id) {
       userPersonId = profile.person_id;
-      const { data: claimedPersons } = await supabase
-        .from("persons")
-        .select("id, first_name, middle_name, last_name, maternal_last_name")
-        .eq("is_claimed", true);
+      // Solo el Administrador (Usuario Cero) tiene habilitado el selector de perspectivas de auditoría
+      if (profile.is_user_zero) {
+        const { data: claimedPersons } = await supabase
+          .from("persons")
+          .select("id, first_name, middle_name, last_name, maternal_last_name")
+          .eq("is_claimed", true);
 
-      availablePerspectives = (claimedPersons || []).map((cp) => ({
-        id: cp.id,
-        name:
-          cp.id === profile.person_id
-            ? `Tú (${formatFullName({
-                firstName: cp.first_name,
-                middleName: cp.middle_name,
-                lastName: cp.last_name,
-                maternalLastName: cp.maternal_last_name,
-              })})`
-            : formatFullName({
-                firstName: cp.first_name,
-                middleName: cp.middle_name,
-                lastName: cp.last_name,
-                maternalLastName: cp.maternal_last_name,
-              }),
-      }));
+        availablePerspectives = (claimedPersons || []).map((cp) => ({
+          id: cp.id,
+          name:
+            cp.id === profile.person_id
+              ? `Tú (${formatFullName({
+                  firstName: cp.first_name,
+                  middleName: cp.middle_name,
+                  lastName: cp.last_name,
+                  maternalLastName: cp.maternal_last_name,
+                })})`
+              : formatFullName({
+                  firstName: cp.first_name,
+                  middleName: cp.middle_name,
+                  lastName: cp.last_name,
+                  maternalLastName: cp.maternal_last_name,
+                }),
+        }));
+      } else {
+        availablePerspectives = [];
+      }
     }
 
     familyMembers = await getFamilyMembers(params?.perspective);

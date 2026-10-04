@@ -381,3 +381,40 @@ export function inferKinship({
     explanation: "Familiar de la red genealógica",
   };
 }
+
+/**
+ * Obtiene los identificadores de todas las personas conectadas a la red familiar de startPersonId
+ * a través de relaciones verticales (padres-hijos) y uniones visibles.
+ */
+export function getConnectedFamilyIds(
+  startPersonId: string,
+  parentEdges: { parent_id: string; child_id: string }[],
+  unions: { person_a_id: string; person_b_id: string }[]
+): Set<string> {
+  const adj = new Map<string, Set<string>>();
+  const addEdge = (a: string, b: string) => {
+    if (!adj.has(a)) adj.set(a, new Set());
+    if (!adj.has(b)) adj.set(b, new Set());
+    adj.get(a)!.add(b);
+    adj.get(b)!.add(a);
+  };
+
+  parentEdges.forEach((e) => addEdge(e.parent_id, e.child_id));
+  unions.forEach((u) => addEdge(u.person_a_id, u.person_b_id));
+
+  const visited = new Set<string>([startPersonId]);
+  const queue = [startPersonId];
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    const neighbors = adj.get(curr);
+    if (neighbors) {
+      for (const n of neighbors) {
+        if (!visited.has(n)) {
+          visited.add(n);
+          queue.push(n);
+        }
+      }
+    }
+  }
+  return visited;
+}

@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { formatFullName, type FamilyMemberItem, type FamilyRelationshipType } from "./types";
 import type { Gender } from "@/types/database.types";
-import { inferKinship } from "./utils/kinship-inference";
+import { inferKinship, getConnectedFamilyIds } from "./utils/kinship-inference";
 import crypto from "crypto";
 
 const RELATIONSHIP_LABELS: Record<FamilyRelationshipType, string> = {
@@ -37,10 +37,12 @@ export async function getFamilyMembers(perspectivePersonId?: string): Promise<Fa
     .single();
 
   if (!profile?.person_id) return [];
-  const currentPersonId =
-    perspectivePersonId && perspectivePersonId.trim().length > 0
-      ? perspectivePersonId.trim()
-      : profile.person_id;
+
+  // Solo Usuario Cero (Administrador) puede consultar el directorio desde la perspectiva de otra persona
+  let currentPersonId = profile.person_id;
+  if (profile.is_user_zero && perspectivePersonId && perspectivePersonId.trim().length > 0) {
+    currentPersonId = perspectivePersonId.trim();
+  }
 
   // 2. Consultar relaciones verticales (padres e hijos)
   const { data: allParentEdges } = await supabase
@@ -967,10 +969,67 @@ export async function searchPersonsAction(
     return { results: [] };
   }
 
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("person_id, is_user_zero")
+    .eq("id", user.id)
+    .single();
+
+  const isUserZero = profile?.is_user_zero ?? false;
+  const userPersonId = profile?.person_id;
+
+  let allowedPersonIds: string[] | null = null;
+  if (!isUserZero && userPersonId) {
+    const { data: allParentEdges } = await supabase
+      .from("parent_child_edges")
+      .select("parent_id, child_id");
+
+    const { data: allUnions } = await supabase
+      .from("union_edges")
+      .select("person_a_id, person_b_id, union_type, status");
+
+    const hasSharedChildren = (personA: string, personB: string): boolean => {
+      const kidsA = allParentEdges?.filter((e) => e.parent_id === personA).map((e) => e.child_id) ?? [];
+      const kidsB = allParentEdges?.filter((e) => e.parent_id === personB).map((e) => e.child_id) ?? [];
+      return kidsA.some((id) => kidsB.includes(id));
+    };
+
+    const treeVisibleUnions = (allUnions || []).filter((u) => {
+      if (u.status === "rejected") return false;
+      if (u.union_type === "separated" || u.union_type === "divorced") {
+        return hasSharedChildren(u.person_a_id, u.person_b_id);
+      }
+      return true;
+    });
+
+    const familySet = getConnectedFamilyIds(userPersonId, allParentEdges || [], treeVisibleUnions);
+
+    try {
+      const { data: shares } = await supabase
+        .from("tree_access_shares")
+        .select("granter_person_id")
+        .eq("requester_user_id", user.id)
+        .eq("status", "approved");
+
+      shares?.forEach((s) => familySet.add(s.granter_person_id));
+    } catch {
+      // Ignorar si no existe la tabla
+    }
+
+    allowedPersonIds = Array.from(familySet);
+    if (allowedPersonIds.length === 0) {
+      return { results: [] };
+    }
+  }
+
   // 1. Verificar si coincide con formato UUID (ej. al compartir o pegar el ID)
   const isFullUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(query);
 
   if (isFullUuid) {
+    if (allowedPersonIds && !allowedPersonIds.includes(query)) {
+      return { results: [] };
+    }
+
     const { data: personById, error: idError } = await supabase
       .from("persons")
       .select("id, first_name, last_name, gender, birth_date, is_claimed")
@@ -1004,6 +1063,10 @@ export async function searchPersonsAction(
     .from("persons")
     .select("id, first_name, last_name, gender, birth_date, is_claimed")
     .limit(10);
+
+  if (allowedPersonIds) {
+    queryBuilder = queryBuilder.in("id", allowedPersonIds);
+  }
 
   if (terms.length === 1) {
     queryBuilder = queryBuilder.or(`first_name.ilike.%${terms[0]}%,last_name.ilike.%${terms[0]}%`);
