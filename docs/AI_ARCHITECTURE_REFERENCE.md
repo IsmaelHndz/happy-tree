@@ -1,17 +1,6 @@
-<!-- BEGIN:nextjs-agent-rules -->
-
-# This is NOT the Next.js you know
-
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
-
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
-
-<!-- END:nextjs-agent-rules -->
-
 # HAPPY TREE — AI AGENT ARCHITECTURAL & SYSTEM REFERENCE MANUAL
 > **Audience**: AI Agents, LLM Pair Programmers, Autonomous Coding Assistants.  
 > **Purpose**: Single-source-of-truth technical blueprint. Read this file to understand the architecture, data flow, layout algorithms, security boundaries, and known edge-case gotchas without crawling the whole codebase.
-> **Full standalone mirror**: [docs/AI_ARCHITECTURE_REFERENCE.md](file:///Users/ismael/Developer/happy-tree/docs/AI_ARCHITECTURE_REFERENCE.md)
 
 ---
 
@@ -276,4 +265,3 @@ Ensure `next build` passes with 0 TypeScript errors.
 
 ---
 *Maintained for Antigravity AI Agents & Deepmind Coding Systems.*
-
