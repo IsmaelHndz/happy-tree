@@ -6,6 +6,7 @@ import { getFamilyMembers } from "@/features/genealogy/actions";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { FamilyDirectory } from "@/features/genealogy/components/family-directory";
 import { FriendsManagerModal } from "@/features/genealogy/components/friends-manager-modal";
+import { EndorsementsManagerModal } from "@/features/genealogy/components/endorsements-manager-modal";
 import { formatFullName, type FamilyMemberItem } from "@/features/genealogy/types";
 import {
   GitFork,
@@ -22,7 +23,7 @@ import {
 export const dynamic = "force-dynamic";
 
 interface HomeProps {
-  searchParams?: Promise<{ unauthorized?: string; error?: string; code?: string }>;
+  searchParams?: Promise<{ unauthorized?: string; error?: string; code?: string; perspective?: string }>;
 }
 
 export default async function Home({ searchParams }: HomeProps) {
@@ -52,6 +53,8 @@ export default async function Home({ searchParams }: HomeProps) {
 
   let familyMembers: FamilyMemberItem[] = [];
   let availableAnchors: { id: string; name: string }[] = [];
+  let availablePerspectives: { id: string; name: string }[] = [];
+  let userPersonId: string | null = null;
 
   if (user) {
     interface ProfileQueryResult {
@@ -110,7 +113,33 @@ export default async function Home({ searchParams }: HomeProps) {
       canInvite: inviteResult?.can_invite ?? (profile?.is_user_zero ?? false),
     };
 
-    familyMembers = await getFamilyMembers();
+    if (profile?.person_id) {
+      userPersonId = profile.person_id;
+      const { data: claimedPersons } = await supabase
+        .from("persons")
+        .select("id, first_name, middle_name, last_name, maternal_last_name")
+        .eq("is_claimed", true);
+
+      availablePerspectives = (claimedPersons || []).map((cp) => ({
+        id: cp.id,
+        name:
+          cp.id === profile.person_id
+            ? `Tú (${formatFullName({
+                firstName: cp.first_name,
+                middleName: cp.middle_name,
+                lastName: cp.last_name,
+                maternalLastName: cp.maternal_last_name,
+              })})`
+            : formatFullName({
+                firstName: cp.first_name,
+                middleName: cp.middle_name,
+                lastName: cp.last_name,
+                maternalLastName: cp.maternal_last_name,
+              }),
+      }));
+    }
+
+    familyMembers = await getFamilyMembers(params?.perspective);
 
     availableAnchors = profile?.person_id
       ? [
@@ -222,20 +251,27 @@ export default async function Home({ searchParams }: HomeProps) {
 
               {/* Métricas del Modelo de Confianza */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-2xl bg-neutral-950/60 border border-neutral-800">
-                  <div className="flex items-center gap-2 text-xs text-neutral-400 mb-1">
-                    <Award className="w-4 h-4 text-emerald-400" />
-                    <span>Reconocimientos Familiares</span>
-                  </div>
-                  <div className="text-xl font-bold text-white">
-                    {userProfile.isUserZero ? "Ilimitados (Fundador)" : `${userProfile.endorsementsCount} / 3`}
-                  </div>
-                  <div className="text-[11px] text-neutral-500 mt-1">
-                    {userProfile.isUserZero
-                      ? "Permiso total de expansión genealógica"
-                      : userProfile.canInvite
-                      ? "¡Umbral de confianza alcanzado para invitar!"
-                      : "Necesitas 3 endosos para enviar invitaciones"}
+                <div className="p-4 rounded-2xl bg-neutral-950/60 border border-neutral-800 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between text-xs text-neutral-400 mb-1">
+                      <div className="flex items-center gap-2">
+                        <Award className="w-4 h-4 text-emerald-400" />
+                        <span>Reconocimientos Familiares</span>
+                      </div>
+                      {userProfile.isUserZero && (
+                        <EndorsementsManagerModal isUserZero={userProfile.isUserZero} buttonLabel="Respaldos" />
+                      )}
+                    </div>
+                    <div className="text-xl font-bold text-white mt-1">
+                      {userProfile.isUserZero ? "Ilimitados (Fundador)" : `${userProfile.endorsementsCount} / 3`}
+                    </div>
+                    <div className="text-[11px] text-neutral-500 mt-1">
+                      {userProfile.isUserZero
+                        ? "Permiso total de validación y expansión genealógica"
+                        : userProfile.canInvite
+                        ? "¡Umbral de confianza alcanzado para invitar!"
+                        : "Necesitas 3 endosos para enviar invitaciones"}
+                    </div>
                   </div>
                 </div>
 
@@ -277,6 +313,8 @@ export default async function Home({ searchParams }: HomeProps) {
               <FamilyDirectory
                 members={familyMembers}
                 isUserZero={userProfile?.isUserZero}
+                currentPerspectiveId={params?.perspective || userPersonId || undefined}
+                availablePerspectives={availablePerspectives}
               />
             </div>
           </div>

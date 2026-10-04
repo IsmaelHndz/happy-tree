@@ -44,6 +44,8 @@ export interface FamilyMemberItem {
     unionType: "married" | "civil_union" | "divorced" | "separated" | "partner";
     partnerId: string;
   } | null;
+  isEndorsedByMe?: boolean;
+  endorsementsCount?: number;
 }
 
 export interface UpdateUnionInput {

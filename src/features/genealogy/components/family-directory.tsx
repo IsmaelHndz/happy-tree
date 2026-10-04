@@ -7,7 +7,7 @@ import { formatFullName, calculateAge } from "../types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
-import { endorseFamilyMemberAction } from "@/features/genealogy/actions";
+import { EndorsementsManagerModal } from "@/features/genealogy/components/endorsements-manager-modal";
 import {
   Users,
   ShieldCheck,
@@ -16,21 +16,26 @@ import {
   Pencil,
   UserPlus,
   Cake,
-  Loader2,
 } from "lucide-react";
 
 interface FamilyDirectoryProps {
   members: FamilyMemberItem[];
   isUserZero?: boolean;
+  currentPerspectiveId?: string;
+  availablePerspectives?: { id: string; name: string }[];
 }
 
-export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectoryProps) {
+export function FamilyDirectory({
+  members,
+  isUserZero = false,
+  currentPerspectiveId,
+  availablePerspectives = [],
+}: FamilyDirectoryProps) {
   const router = useRouter();
   const [filter, setFilter] = useState<"all" | "parents" | "children" | "spouses" | "siblings">("all");
   const [activeInviteMember, setActiveInviteMember] = useState<FamilyMemberItem | null>(null);
   const [activeEditMember, setActiveEditMember] = useState<FamilyMemberItem | null>(null);
   const [activeAddAnchor, setActiveAddAnchor] = useState<FamilyMemberItem | null>(null);
-  const [endorsingPersonId, setEndorsingPersonId] = useState<string | null>(null);
 
   const filteredMembers = members.filter((m) => {
     if (filter === "parents") return m.relationshipCategory === "parent";
@@ -40,133 +45,146 @@ export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectory
     return true;
   });
 
-  const handleEndorseMember = async (personId: string, name: string) => {
-    setEndorsingPersonId(personId);
-    const res = await endorseFamilyMemberAction(personId);
-    setEndorsingPersonId(null);
-    if (res.error) {
-      alert(res.error);
-    } else {
-      alert(`¡${name} respaldado/a exitosamente con permisos completos de la red!`);
-      router.refresh();
-    }
-  };
-
   return (
     <div className="space-y-6">
-      {/* Pestañas de Filtrado */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 pb-3">
-        <button
-          onClick={() => setFilter("all")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-            filter === "all"
-              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-              : "text-neutral-400 hover:text-white"
-          }`}
-        >
-          Todos ({members.length})
-        </button>
-        <button
-          onClick={() => setFilter("parents")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-            filter === "parents"
-              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-              : "text-neutral-400 hover:text-white"
-          }`}
-        >
-          Padres ({members.filter((m) => m.relationshipCategory === "parent").length})
-        </button>
-        <button
-          onClick={() => setFilter("children")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-            filter === "children"
-              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-              : "text-neutral-400 hover:text-white"
-          }`}
-        >
-          Hijos ({members.filter((m) => m.relationshipCategory === "child").length})
-        </button>
-        <button
-          onClick={() => setFilter("spouses")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-            filter === "spouses"
-              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-              : "text-neutral-400 hover:text-white"
-          }`}
-        >
-          Pareja ({members.filter((m) => m.relationshipCategory === "spouse").length})
-        </button>
-        <button
-          onClick={() => setFilter("siblings")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-            filter === "siblings"
-              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-              : "text-neutral-400 hover:text-white"
-          }`}
-        >
-          Hermanos ({members.filter((m) => m.relationshipCategory === "sibling").length})
-        </button>
+      {/* Barra superior de Perspectiva y Herramientas de Administrador */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-800/80">
+        {/* Pestañas de Filtrado */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={() => setFilter("all")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition ${
+              filter === "all"
+                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            Todos ({members.length})
+          </button>
+          <button
+            onClick={() => setFilter("parents")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition ${
+              filter === "parents"
+                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            Padres ({members.filter((m) => m.relationshipCategory === "parent").length})
+          </button>
+          <button
+            onClick={() => setFilter("children")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition ${
+              filter === "children"
+                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            Hijos ({members.filter((m) => m.relationshipCategory === "child").length})
+          </button>
+          <button
+            onClick={() => setFilter("spouses")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition ${
+              filter === "spouses"
+                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            Pareja ({members.filter((m) => m.relationshipCategory === "spouse").length})
+          </button>
+          <button
+            onClick={() => setFilter("siblings")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition ${
+              filter === "siblings"
+                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            Hermanos ({members.filter((m) => m.relationshipCategory === "sibling").length})
+          </button>
+        </div>
+
+        {/* Perspectiva y Respaldos */}
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {availablePerspectives && availablePerspectives.length > 1 && (
+            <div className="flex items-center gap-1.5 bg-neutral-950 px-2.5 py-1 rounded-xl border border-neutral-800 text-xs">
+              <span className="text-[11px] text-neutral-400 font-mono">Perspectiva:</span>
+              <select
+                value={currentPerspectiveId || ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val) {
+                    router.push(`/?perspective=${val}`);
+                  } else {
+                    router.push("/");
+                  }
+                }}
+                className="bg-transparent text-white text-xs font-medium focus:outline-none cursor-pointer"
+              >
+                {availablePerspectives.map((p) => (
+                  <option key={p.id} value={p.id} className="bg-neutral-900 text-white">
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {isUserZero && (
+            <EndorsementsManagerModal isUserZero={isUserZero} buttonLabel="Respaldos" />
+          )}
+        </div>
       </div>
 
-      {/* Grid de Familiares */}
+      {/* Grid de Miembros */}
       {filteredMembers.length === 0 ? (
-        <div className="py-12 text-center rounded-2xl bg-neutral-950/40 border border-dashed border-neutral-800 p-8">
-          <Users className="w-10 h-10 text-neutral-600 mx-auto mb-3" />
-          <h3 className="text-sm font-semibold text-neutral-300">
-            No hay familiares en esta categoría
-          </h3>
-          <p className="text-xs text-neutral-500 mt-1 max-w-sm mx-auto">
-            Utiliza el botón superior &ldquo;Agregar Familiar&rdquo; para registrar a tus padres, hijos o pareja.
+        <div className="p-8 text-center border border-dashed border-neutral-800 rounded-2xl bg-neutral-950/40">
+          <Users className="w-8 h-8 text-neutral-600 mx-auto mb-2" />
+          <p className="text-xs text-neutral-400">
+            No se encontraron familiares en esta categoría.
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredMembers.map((member) => {
-            const initials = `${member.firstName[0] || ""}${member.lastName[0] || ""}`.toUpperCase();
             const isFemale = member.gender === "female";
             const isMale = member.gender === "male";
+            const initials = `${member.firstName.charAt(0)}${member.lastName.charAt(0)}`.toUpperCase();
             const age = calculateAge(member.birthDate, member.deathDate);
 
             return (
               <div
                 key={member.id}
-                className={`p-5 rounded-2xl bg-neutral-900/70 border transition flex flex-col justify-between ${
-                  isFemale
-                    ? "border-neutral-800/80 hover:border-pink-500/50"
-                    : isMale
-                    ? "border-neutral-800/80 hover:border-blue-500/50"
-                    : "border-neutral-800/80 hover:border-neutral-700"
-                }`}
+                className="flex flex-col justify-between p-5 rounded-2xl bg-neutral-950/70 border border-neutral-800/80 hover:border-neutral-700/80 transition-all shadow-md group"
               >
                 <div>
-                  {/* Cabecera de la Tarjeta */}
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
+                  {/* Fila Superior: Avatar, Nombre Completo y Rol */}
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-3 min-w-0">
                       <div
-                        className={`w-10 h-10 rounded-xl font-bold text-xs flex items-center justify-center border ${
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
                           isFemale
-                            ? "bg-gradient-to-tr from-pink-950 via-rose-900 to-pink-800 border-pink-500/50 text-pink-200"
+                            ? "bg-pink-950 text-pink-300 border border-pink-800/60"
                             : isMale
-                            ? "bg-gradient-to-tr from-blue-950 via-indigo-900 to-blue-800 border-blue-500/50 text-blue-200"
-                            : "bg-neutral-800 border-neutral-700 text-neutral-300"
+                            ? "bg-blue-950 text-blue-300 border border-blue-800/60"
+                            : "bg-emerald-950 text-emerald-300 border border-emerald-800/60"
                         }`}
                       >
                         {initials}
                       </div>
-                      <div>
+
+                      <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <h4 className="text-sm font-bold text-white leading-tight">
+                          <h3 className="text-sm font-semibold text-white tracking-tight truncate">
                             {formatFullName(member)}
-                          </h4>
-                          {isFemale && (
+                          </h3>
+                          {isFemale ? (
                             <span
                               title="Mujer"
                               className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[10px] shrink-0"
                             >
                               ♀
                             </span>
-                          )}
-                          {isMale && (
+                          ) : (
                             <span
                               title="Hombre"
                               className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-400 font-bold text-[10px] shrink-0"
@@ -189,10 +207,18 @@ export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectory
                   {/* Estado de Reclamación / Vida */}
                   <div className="mb-4">
                     {member.isClaimed ? (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-300 bg-emerald-950/60 border border-emerald-800/50 px-2.5 py-0.5 rounded-full">
-                        <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                        Reclamado &bull; Cuenta Activa
-                      </span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-300 bg-emerald-950/60 border border-emerald-800/50 px-2.5 py-0.5 rounded-full">
+                          <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                          Reclamado &bull; Cuenta Activa
+                        </span>
+                        {member.isEndorsedByMe && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-mono text-amber-300 bg-amber-950/60 border border-amber-800/40 px-2 py-0.5 rounded-full">
+                            <ShieldCheck className="w-2.5 h-2.5 text-amber-400" />
+                            Respaldado
+                          </span>
+                        )}
+                      </div>
                     ) : !member.isLiving ? (
                       <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-neutral-400 bg-neutral-950 border border-neutral-800 px-2.5 py-0.5 rounded-full">
                         Ancestro / Fallecido
@@ -226,7 +252,7 @@ export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectory
                     )}
                   </div>
 
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                     {/* Botón para agregar familiares anclados a esta persona */}
                     <button
                       onClick={() => setActiveAddAnchor(member)}
@@ -237,7 +263,7 @@ export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectory
                       <span>Pariente</span>
                     </button>
 
-                    {/* Solo se puede editar si la ficha NO ha sido reclamada (es decir, datos colaborativos pendientes) */}
+                    {/* Solo se puede editar si la ficha NO ha sido reclamada */}
                     {!member.isClaimed && (
                       <button
                         onClick={() => setActiveEditMember(member)}
@@ -257,22 +283,6 @@ export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectory
                       >
                         <KeyRound className="w-3.5 h-3.5 shrink-0" />
                         <span>{member.invitationStatus === "pending" ? "Enlace" : "Invitar"}</span>
-                      </button>
-                    )}
-
-                    {isUserZero && member.isClaimed && (
-                      <button
-                        onClick={() => handleEndorseMember(member.id, formatFullName(member))}
-                        disabled={endorsingPersonId === member.id}
-                        title="Otorgar respaldo de Administrador (Permiso para invitar y gestionar)"
-                        className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-amber-950/60 hover:bg-amber-600 hover:text-white text-amber-300 border border-amber-800/50 rounded-lg transition whitespace-nowrap shrink-0"
-                      >
-                        {endorsingPersonId === member.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                        )}
-                        <span>Respaldar</span>
                       </button>
                     )}
                   </div>
@@ -299,7 +309,10 @@ export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectory
       {activeEditMember && (
         <EditMemberModal
           member={activeEditMember}
-          availableFamilyMembers={members.map((m) => ({ id: m.id, name: formatFullName(m) }))}
+          availableFamilyMembers={members.map((m) => ({
+            id: m.id,
+            name: formatFullName(m),
+          }))}
           viewerParents={members
             .filter((m) => m.relationshipCategory === "parent")
             .map((p) => ({ id: p.id, name: formatFullName(p) }))}
@@ -310,14 +323,13 @@ export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectory
         />
       )}
 
-      {/* Modal de Invitación Dinámico */}
+      {/* Modal de Invitación Criptográfica */}
       {activeInviteMember && (
         <InviteModal
           personId={activeInviteMember.id}
           personName={formatFullName(activeInviteMember)}
           relationshipLabel={activeInviteMember.relationshipLabel}
           existingToken={activeInviteMember.invitationToken}
-          existingEmail={activeInviteMember.invitedEmail}
           isOpen={Boolean(activeInviteMember)}
           onClose={() => setActiveInviteMember(null)}
         />

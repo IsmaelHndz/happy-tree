@@ -546,6 +546,20 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                       Centro
                     </span>
                   )}
+                  {/* Botón rápido para agregar pariente anclado a este nodo */}
+                  {!graph.isViewerGuest && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveAddAnchor(node);
+                      }}
+                      title={`Añadir pariente anclado a ${node.firstName}`}
+                      className="p-1 text-neutral-400 hover:text-emerald-400 hover:bg-neutral-800 rounded-lg transition"
+                    >
+                      <UserPlus className="w-3 h-3" />
+                    </button>
+                  )}
+
                   {/* Solo se puede editar si es su propia ficha personal (isSelf) O si es una ficha no reclamada */}
                   {(() => {
                     if (graph.isViewerGuest) return null;
@@ -640,6 +654,21 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
 
       {/* Controles Flotantes de Navegación y Visualización */}
       <div className="tree-controls absolute bottom-6 right-6 flex items-center gap-1 bg-neutral-900/90 border border-neutral-800 p-1.5 rounded-2xl shadow-xl backdrop-blur-md z-10">
+        {/* Botón para añadir familiar desde el lienzo */}
+        {!graph.isViewerGuest && (
+          <>
+            <button
+              onClick={() => setActiveAddAnchor(graph.nodes.find((n) => n.id === graph.focusPerson.id) || null)}
+              title="Añadir familiar al árbol genealógico"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-md transition"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Añadir Pariente</span>
+            </button>
+            <div className="w-[1px] h-5 bg-neutral-800 mx-1" />
+          </>
+        )}
+
         {/* Toggle para ocultar parejas de hermanos */}
         <button
           onClick={() => setHideSiblingSpouses(!hideSiblingSpouses)}

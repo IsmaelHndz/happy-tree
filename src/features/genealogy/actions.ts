@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import type { FamilyMemberItem, FamilyRelationshipType } from "./types";
+import { formatFullName, type FamilyMemberItem, type FamilyRelationshipType } from "./types";
 import type { Gender } from "@/types/database.types";
 import { inferKinship } from "./utils/kinship-inference";
 import crypto from "crypto";
@@ -21,7 +21,7 @@ const RELATIONSHIP_LABELS: Record<FamilyRelationshipType, string> = {
 /**
  * Obtiene la lista de familiares conectados al usuario actual y su estado de reclamación/invitación.
  */
-export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
+export async function getFamilyMembers(perspectivePersonId?: string): Promise<FamilyMemberItem[]> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -32,12 +32,15 @@ export async function getFamilyMembers(): Promise<FamilyMemberItem[]> {
   // 1. Obtener person_id del usuario
   const { data: profile } = await supabase
     .from("profiles")
-    .select("person_id")
+    .select("person_id, is_user_zero")
     .eq("id", user.id)
     .single();
 
   if (!profile?.person_id) return [];
-  const currentPersonId = profile.person_id;
+  const currentPersonId =
+    perspectivePersonId && perspectivePersonId.trim().length > 0
+      ? perspectivePersonId.trim()
+      : profile.person_id;
 
   // 2. Consultar relaciones verticales (padres e hijos)
   const { data: allParentEdges } = await supabase
@@ -1259,5 +1262,121 @@ export async function endorseFamilyMemberAction(endorsedPersonId: string) {
   };
 }
 
+export interface EndorsementMemberItem {
+  id: string;
+  name: string;
+  gender: string;
+  isClaimed: boolean;
+  claimedByEmail?: string | null;
+  isEndorsedByMe: boolean;
+  totalEndorsements: number;
+  canInvite: boolean;
+}
 
+/**
+ * Consulta la lista de miembros reclamados para el modal de gestión de respaldos.
+ */
+export async function getEndorsementManagementDataAction(): Promise<{
+  members: EndorsementMemberItem[];
+  isUserZero: boolean;
+}> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
+  if (!user) return { members: [], isUserZero: false };
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile?.person_id) return { members: [], isUserZero: false };
+
+  // Consultar todas las personas que han reclamado su ficha (distintas a la mía)
+  const { data: claimedPersons } = await supabase
+    .from("persons")
+    .select("id, first_name, middle_name, last_name, maternal_last_name, gender, is_claimed, claimed_by_user_id")
+    .eq("is_claimed", true)
+    .neq("id", profile.person_id);
+
+  if (!claimedPersons || claimedPersons.length === 0) {
+    return { members: [], isUserZero: profile.is_user_zero };
+  }
+
+  // Consultar todos los respaldos
+  const { data: allEndorsements } = await supabase
+    .from("endorsements")
+    .select("endorser_id, endorsed_id, created_at");
+
+  const myEndorsements = new Set(
+    (allEndorsements || [])
+      .filter((e) => e.endorser_id === profile.person_id)
+      .map((e) => e.endorsed_id)
+  );
+
+  const endorsementCounts = new Map<string, number>();
+  (allEndorsements || []).forEach((e) => {
+    endorsementCounts.set(e.endorsed_id, (endorsementCounts.get(e.endorsed_id) || 0) + 1);
+  });
+
+  const members: EndorsementMemberItem[] = claimedPersons.map((p) => {
+    const isEndorsedByMe = myEndorsements.has(p.id);
+    const count = endorsementCounts.get(p.id) || 0;
+    return {
+      id: p.id,
+      name: formatFullName({
+        firstName: p.first_name,
+        middleName: p.middle_name,
+        lastName: p.last_name,
+        maternalLastName: p.maternal_last_name,
+      }),
+      gender: p.gender,
+      isClaimed: p.is_claimed,
+      isEndorsedByMe,
+      totalEndorsements: count,
+      canInvite: profile.is_user_zero ? isEndorsedByMe : count >= 3,
+    };
+  });
+
+  return {
+    members,
+    isUserZero: profile.is_user_zero,
+  };
+}
+
+/**
+ * Retira un respaldo previamente otorgado a un familiar.
+ */
+export async function removeEndorsementAction(endorsedPersonId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return { error: "No autenticado" };
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("person_id")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile?.person_id) return { error: "Sin ficha personal" };
+
+  const { error } = await supabase
+    .from("endorsements")
+    .delete()
+    .eq("endorser_id", profile.person_id)
+    .eq("endorsed_id", endorsedPersonId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+  return { success: true, message: "Respaldo retirado exitosamente." };
+}
