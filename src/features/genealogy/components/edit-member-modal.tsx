@@ -64,11 +64,18 @@ export interface EditableMemberData {
 interface EditMemberModalProps {
   member: EditableMemberData;
   availableFamilyMembers?: { id: string; name: string }[];
+  viewerParents?: { id: string; name: string }[];
   isOpen: boolean;
   onClose: () => void;
 }
 
-export function EditMemberModal({ member, availableFamilyMembers, isOpen, onClose }: EditMemberModalProps) {
+export function EditMemberModal({
+  member,
+  availableFamilyMembers,
+  viewerParents,
+  isOpen,
+  onClose,
+}: EditMemberModalProps) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(member.firstName);
   const [middleName, setMiddleName] = useState(member.middleName || "");
@@ -113,7 +120,30 @@ export function EditMemberModal({ member, availableFamilyMembers, isOpen, onClos
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  if (!isOpen) return null;
+  const handleAssignViewerParents = async () => {
+    if (!viewerParents || viewerParents.length === 0) return;
+    const newIds = viewerParents.map((p) => p.id);
+    setParentIds(newIds);
+    setIsUpdatingParents(true);
+    setError(null);
+    setParentSuccessMessage(null);
+
+    const res = await updatePersonParentsAction({
+      personId: member.id,
+      parentIds: newIds,
+      relationshipType: "biological",
+    });
+
+    setIsUpdatingParents(false);
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setParentSuccessMessage(
+        `¡Vinculado/a como hermano/a exitosamente! Se asignaron a tus progenitores (${viewerParents.map((p) => p.name).join(" y ")}).`
+      );
+      router.refresh();
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -136,16 +166,39 @@ export function EditMemberModal({ member, availableFamilyMembers, isOpen, onClos
 
     const result = await updateFamilyMemberAction(formData);
 
-    setIsPending(false);
     if (result.error) {
+      setIsPending(false);
       setError(result.error);
-    } else {
-      router.refresh();
-      setSuccess(true);
-      setTimeout(() => {
-        onClose();
-      }, 700);
+      return;
     }
+
+    // Si los progenitores cambiaron respecto a los iniciales, guardarlos también automáticamente
+    const initialParentIds = (member.parentConnections?.map((p) => p.parentId) || []).sort();
+    const currentParentIds = [...parentIds].sort();
+    const parentsChanged =
+      initialParentIds.length !== currentParentIds.length ||
+      initialParentIds.some((id, idx) => id !== currentParentIds[idx]);
+
+    if (parentsChanged) {
+      const parentsResult = await updatePersonParentsAction({
+        personId: member.id,
+        parentIds,
+        relationshipType,
+      });
+
+      if (parentsResult.error) {
+        setIsPending(false);
+        setError(parentsResult.error);
+        return;
+      }
+    }
+
+    setIsPending(false);
+    router.refresh();
+    setSuccess(true);
+    setTimeout(() => {
+      onClose();
+    }, 700);
   };
 
   const handleUpdateUnionStatus = async () => {
@@ -278,6 +331,8 @@ export function EditMemberModal({ member, availableFamilyMembers, isOpen, onClos
     }
   };
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
@@ -406,6 +461,44 @@ export function EditMemberModal({ member, availableFamilyMembers, isOpen, onClos
               {parentIds.length}/2 registrados
             </span>
           </div>
+
+          {/* Asistente Rápido: Vincular como Hermano/a compartiendo progenitores */}
+          {viewerParents && viewerParents.length > 0 && (
+            <div>
+              {viewerParents.every((vp) => parentIds.includes(vp.id)) ? (
+                <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-800/50 flex items-center gap-2.5 text-xs text-emerald-200">
+                  <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div>
+                    <span className="font-semibold text-emerald-300">Vinculado/a como hermano/a: </span>
+                    <span className="text-emerald-400/80">Comparte a tus progenitores ({viewerParents.map((p) => p.name).join(" y ")}).</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-2xl bg-teal-950/40 border border-teal-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+                  <div className="flex items-center gap-2.5">
+                    <Sparkles className="w-4 h-4 text-teal-400 shrink-0" />
+                    <div>
+                      <p className="text-xs font-semibold text-teal-200">
+                        ¿Es tu hermano o hermana?
+                      </p>
+                      <p className="text-[11px] text-teal-300/80">
+                        Asignar a tus mismos padres ({viewerParents.map((p) => p.name).join(" y ")}) para que el árbol lo reconozca como Hermano/a.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isUpdatingParents}
+                    onClick={handleAssignViewerParents}
+                    className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shrink-0 transition shadow-sm flex items-center justify-center gap-1.5"
+                  >
+                    {isUpdatingParents ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitFork className="w-3.5 h-3.5" />}
+                    <span>Vincular como Hermano/a</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Lista de Progenitores Actuales */}
           <div className="space-y-2">

@@ -28,7 +28,18 @@ export async function generateInvitationAction(
   });
 
   const inviteCheck = canInviteData as { can_invite?: boolean; needed?: number } | null;
-  if (!inviteCheck?.can_invite) {
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  const isUserZero = profile?.is_user_zero ?? false;
+  const isClaimedUser = Boolean(profile?.person_id);
+
+  // Si no puede invitar y no es usuario cero ni miembro verificado
+  if (inviteCheck && !inviteCheck.can_invite && !isUserZero && !isClaimedUser) {
     return {
       error: `Aún no tienes los permisos requeridos para invitar. Necesitas ${
         inviteCheck?.needed ?? 3

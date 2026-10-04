@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import type { FamilyMemberItem } from "../types";
 import { formatFullName, calculateAge } from "../types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
+import { endorseFamilyMemberAction } from "@/features/genealogy/actions";
 import {
   Users,
   ShieldCheck,
@@ -14,17 +16,21 @@ import {
   Pencil,
   UserPlus,
   Cake,
+  Loader2,
 } from "lucide-react";
 
 interface FamilyDirectoryProps {
   members: FamilyMemberItem[];
+  isUserZero?: boolean;
 }
 
-export function FamilyDirectory({ members }: FamilyDirectoryProps) {
+export function FamilyDirectory({ members, isUserZero = false }: FamilyDirectoryProps) {
+  const router = useRouter();
   const [filter, setFilter] = useState<"all" | "parents" | "children" | "spouses" | "siblings">("all");
   const [activeInviteMember, setActiveInviteMember] = useState<FamilyMemberItem | null>(null);
   const [activeEditMember, setActiveEditMember] = useState<FamilyMemberItem | null>(null);
   const [activeAddAnchor, setActiveAddAnchor] = useState<FamilyMemberItem | null>(null);
+  const [endorsingPersonId, setEndorsingPersonId] = useState<string | null>(null);
 
   const filteredMembers = members.filter((m) => {
     if (filter === "parents") return m.relationshipCategory === "parent";
@@ -33,6 +39,18 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
     if (filter === "siblings") return m.relationshipCategory === "sibling";
     return true;
   });
+
+  const handleEndorseMember = async (personId: string, name: string) => {
+    setEndorsingPersonId(personId);
+    const res = await endorseFamilyMemberAction(personId);
+    setEndorsingPersonId(null);
+    if (res.error) {
+      alert(res.error);
+    } else {
+      alert(`¡${name} respaldado/a exitosamente con permisos completos de la red!`);
+      router.refresh();
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -238,6 +256,22 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
                         <span>{member.invitationStatus === "pending" ? "Enlace" : "Invitar"}</span>
                       </button>
                     )}
+
+                    {isUserZero && member.isClaimed && (
+                      <button
+                        onClick={() => handleEndorseMember(member.id, formatFullName(member))}
+                        disabled={endorsingPersonId === member.id}
+                        title="Otorgar respaldo de Administrador (Permiso para invitar y gestionar)"
+                        className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-amber-950/60 hover:bg-amber-600 hover:text-white text-amber-300 border border-amber-800/50 rounded-lg transition whitespace-nowrap shrink-0"
+                      >
+                        {endorsingPersonId === member.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                        )}
+                        <span>Respaldar</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -263,6 +297,9 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
         <EditMemberModal
           member={activeEditMember}
           availableFamilyMembers={members.map((m) => ({ id: m.id, name: formatFullName(m) }))}
+          viewerParents={members
+            .filter((m) => m.relationshipCategory === "parent")
+            .map((p) => ({ id: p.id, name: formatFullName(p) }))}
           isOpen={Boolean(activeEditMember)}
           onClose={() => setActiveEditMember(null)}
         />

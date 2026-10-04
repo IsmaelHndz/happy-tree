@@ -706,6 +706,14 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
             id: n.id,
             name: formatFullName(n),
           }))}
+          viewerParents={(() => {
+            const viewerParentIds = graph.edges
+              .filter((e) => e.type === "parent-child" && e.targetId === graph.focusPerson.id)
+              .map((e) => e.sourceId);
+            return graph.nodes
+              .filter((n) => viewerParentIds.includes(n.id))
+              .map((n) => ({ id: n.id, name: formatFullName(n) }));
+          })()}
           isOpen={Boolean(activeEditMember)}
           onClose={() => setActiveEditMember(null)}
         />

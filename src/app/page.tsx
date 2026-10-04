@@ -270,7 +270,10 @@ export default async function Home({ searchParams }: HomeProps) {
                 </div>
               </div>
 
-              <FamilyDirectory members={familyMembers} />
+              <FamilyDirectory
+                members={familyMembers}
+                isUserZero={userProfile?.isUserZero}
+              />
             </div>
           </div>
         ) : (

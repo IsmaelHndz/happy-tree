@@ -564,13 +564,15 @@ export async function updateFamilyMemberAction(formData: FormData) {
 
   // Control de permisos:
   // 1. Usuario Cero puede editar cualquier ficha.
-  // 2. Si la ficha está reclamada, solo el usuario reclamante puede editar su propia información.
-  // 3. Si la ficha no está reclamada, el creador puede editarla.
+  // 2. Si la ficha está reclamada, solo el usuario titular puede modificar su propia información.
+  // 3. Si la ficha NO está reclamada, cualquier miembro reclamado de la red familiar o el creador puede editarla y completarla.
   const isUserZero = profile?.is_user_zero ?? false;
   const isClaimedOwner = targetPerson.is_claimed && targetPerson.claimed_by_user_id === user.id;
   const isCreator = targetPerson.created_by_user_id === user.id;
+  const isClaimedMember = Boolean(profile?.person_id);
+  const isUnclaimed = !targetPerson.is_claimed;
 
-  if (!isUserZero && !isClaimedOwner && (!isCreator || targetPerson.is_claimed)) {
+  if (!isUserZero && !isClaimedOwner && !isCreator && !(isUnclaimed && isClaimedMember)) {
     return {
       error: targetPerson.is_claimed
         ? "Esta ficha ya fue reclamada por un familiar y solo su titular puede modificarla."
@@ -667,8 +669,9 @@ export async function deleteFamilyMemberAction(personId: string) {
 
   const isUserZero = profile?.is_user_zero ?? false;
   const isCreator = targetPerson.created_by_user_id === user.id;
+  const isClaimedMember = Boolean(profile?.person_id);
 
-  if (!isUserZero && !isCreator) {
+  if (!isUserZero && !isCreator && !isClaimedMember) {
     return { error: "No tienes permiso para eliminar esta ficha familiar." };
   }
 
@@ -1132,7 +1135,7 @@ export async function updatePersonParentsAction({
   // Consultar ficha
   const { data: targetPerson } = await supabase
     .from("persons")
-    .select("id, created_by_user_id")
+    .select("id, is_claimed, created_by_user_id")
     .eq("id", personId)
     .single();
 
@@ -1140,7 +1143,12 @@ export async function updatePersonParentsAction({
     return { error: "No se encontró la persona." };
   }
 
-  if (!isUserZero && targetPerson.created_by_user_id !== user.id && profile?.person_id !== personId) {
+  const isClaimedMember = Boolean(profile?.person_id);
+  const isSelf = profile?.person_id === personId;
+  const isCreator = targetPerson.created_by_user_id === user.id;
+  const isUnclaimed = !targetPerson.is_claimed;
+
+  if (!isUserZero && !isCreator && !isSelf && !(isUnclaimed && isClaimedMember)) {
     return { error: "No tienes permisos para modificar los parentescos de esta persona." };
   }
 
@@ -1176,6 +1184,61 @@ export async function updatePersonParentsAction({
   revalidatePath("/tree");
 
   return { success: true, message: "Parentescos actualizados exitosamente." };
+}
+
+/**
+ * Server Action: Respaldar o endosar a un familiar reclamado (Permisos de Administrador / Invitador)
+ */
+export async function endorseFamilyMemberAction(endorsedPersonId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Debes estar autenticado para respaldar a un familiar." };
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile?.person_id) {
+    return { error: "No tienes una ficha genealógica activa." };
+  }
+
+  if (profile.person_id === endorsedPersonId) {
+    return { error: "No puedes respaldar tu propia ficha." };
+  }
+
+  // 1. Intentar invocar función RPC segura
+  const { error: rpcError } = await (supabase.rpc as any)("endorse_family_member", {
+    p_endorsed_id: endorsedPersonId,
+    p_notes: profile.is_user_zero ? "Respaldo directo de Administrador / Usuario Cero" : "Reconocimiento familiar",
+  });
+
+  if (rpcError) {
+    // 2. Fallback a insert directo
+    const { error: insertError } = await supabase.from("endorsements").insert({
+      endorser_id: profile.person_id,
+      endorsed_id: endorsedPersonId,
+      notes: profile.is_user_zero ? "Respaldo directo de Administrador / Usuario Cero" : "Reconocimiento familiar",
+    });
+
+    if (insertError && !insertError.message.includes("duplicate") && !insertError.message.includes("unique")) {
+      return { error: `Error al respaldar familiar: ${insertError.message}` };
+    }
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return {
+    success: true,
+    message: "Familiar respaldado exitosamente. Ahora cuenta con permisos completos de la red.",
+  };
 }
 
 
