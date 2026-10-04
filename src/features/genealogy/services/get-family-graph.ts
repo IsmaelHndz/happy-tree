@@ -690,44 +690,54 @@ export async function getFamilyGraph(
   // Identificar progenitores del foco para separación simétrica de ramas
   const motherPerson =
     rawNodes.find(
-      (n) => parentIds.includes(n.id) && (n.gender === "female" || n.relationshipLabel.toLowerCase().includes("madre"))
+      (n) => parentIds.includes(n.id) && (n.gender === "female" || ((n.relationshipLabel || "").toLowerCase().includes("madre")))
     ) || (parentIds.length > 0 ? rawNodes.find((n) => n.id === parentIds[0]) : null);
 
   const fatherPerson =
     rawNodes.find(
-      (n) => parentIds.includes(n.id) && n.id !== motherPerson?.id && (n.gender === "male" || n.relationshipLabel.toLowerCase().includes("padre"))
+      (n) => parentIds.includes(n.id) && n.id !== motherPerson?.id && (n.gender === "male" || ((n.relationshipLabel || "").toLowerCase().includes("padre")))
     ) || (parentIds.length > 1 ? rawNodes.find((n) => n.id === parentIds[1]) : null);
 
-  const motherParents = motherPerson ? (parentsOf.get(motherPerson.id) || []) : [];
-  const fatherParents = fatherPerson ? (parentsOf.get(fatherPerson.id) || []) : [];
+  const motherId = motherPerson?.id;
+  const fatherId = fatherPerson?.id;
+  const motherParents = motherId ? (parentsOf.get(motherId) || []) : [];
+  const fatherParents = fatherId ? (parentsOf.get(fatherId) || []) : [];
 
-  const isMaternalRelative = (personId: string, node: TreeNodeData): boolean => {
-    if (motherPerson && personId === motherPerson.id) return true;
-    const nParents = parentsOf.get(personId) || [];
-    if (motherParents.length > 0 && nParents.some((p) => motherParents.includes(p))) return true;
-    if (node.relationshipLabel.toLowerCase().includes("matern")) return true;
-    if (node.relationshipExplanation?.toLowerCase().includes("madre")) return true;
-    const partnerId = node.unionInfo?.partnerId;
-    if (partnerId) {
-      const partnerNode = rawNodes.find((rn) => rn.id === partnerId);
-      if (partnerNode && partnerId !== personId && isMaternalRelative(partnerId, partnerNode)) return true;
-    }
-    return false;
-  };
+  // Precalcular conjuntos planos sin recursión (evita stack overflow)
+  const maternalIds = new Set<string>();
+  if (motherId) maternalIds.add(motherId);
+  motherParents.forEach((id) => maternalIds.add(id));
 
-  const isPaternalRelative = (personId: string, node: TreeNodeData): boolean => {
-    if (fatherPerson && personId === fatherPerson.id) return true;
-    const nParents = parentsOf.get(personId) || [];
-    if (fatherParents.length > 0 && nParents.some((p) => fatherParents.includes(p))) return true;
-    if (node.relationshipLabel.toLowerCase().includes("patern")) return true;
-    if (node.relationshipExplanation?.toLowerCase().includes("padre")) return true;
-    const partnerId = node.unionInfo?.partnerId;
-    if (partnerId) {
-      const partnerNode = rawNodes.find((rn) => rn.id === partnerId);
-      if (partnerNode && partnerId !== personId && isPaternalRelative(partnerId, partnerNode)) return true;
+  const paternalIds = new Set<string>();
+  if (fatherId) paternalIds.add(fatherId);
+  fatherParents.forEach((id) => paternalIds.add(id));
+
+  rawNodes.forEach((n) => {
+    const nParents = parentsOf.get(n.id) || [];
+    const label = (n.relationshipLabel || "").toLowerCase();
+    const explanation = (n.relationshipExplanation || "").toLowerCase();
+
+    if (motherParents.length > 0 && nParents.some((p) => motherParents.includes(p))) {
+      maternalIds.add(n.id);
+    } else if (label.includes("matern") || explanation.includes("madre")) {
+      maternalIds.add(n.id);
     }
-    return false;
-  };
+
+    if (fatherParents.length > 0 && nParents.some((p) => fatherParents.includes(p))) {
+      paternalIds.add(n.id);
+    } else if (label.includes("patern") || explanation.includes("padre")) {
+      paternalIds.add(n.id);
+    }
+  });
+
+  // Parejas de tíos o cónyuges (un solo paso plano sin llamadas recursivas)
+  rawNodes.forEach((n) => {
+    const partnerId = n.unionInfo?.partnerId;
+    if (partnerId) {
+      if (maternalIds.has(partnerId)) maternalIds.add(n.id);
+      if (paternalIds.has(partnerId)) paternalIds.add(n.id);
+    }
+  });
 
   const allGens = Array.from(new Set(rawNodes.map((n) => n.generation))).sort((a, b) => a - b);
   const minGen = Math.min(...allGens, 0);
@@ -745,15 +755,15 @@ export async function getFamilyGraph(
           if (n.id === centerPersonId) return 20;
           if (spouseIds.includes(n.id)) return 10;
           if (siblingIds.includes(n.id)) {
-            const isMat = isMaternalRelative(n.id, n);
-            const isPat = isPaternalRelative(n.id, n);
+            const isMat = maternalIds.has(n.id);
+            const isPat = paternalIds.has(n.id);
             if (isMat && !isPat) return 15; // Medio hermano materno hacia la izquierda
             if (isPat && !isMat) return 25; // Medio hermano paterno hacia la derecha
             return 22; // Hermano de ambos progenitores
           }
           if (siblingSpouseIds.includes(n.id)) return 30;
-          if (isMaternalRelative(n.id, n)) return 5;
-          if (isPaternalRelative(n.id, n)) return 35;
+          if (maternalIds.has(n.id)) return 5;
+          if (paternalIds.has(n.id)) return 35;
           return 20;
         };
         return getRank(a) - getRank(b);
@@ -762,24 +772,24 @@ export async function getFamilyGraph(
         // Rama materna a la izquierda (pareja de tío materno -> tío materno -> madre)
         // Rama paterna a la derecha (padre -> tío paterno -> pareja de tío paterno)
         const getRank = (n: typeof rawNodes[0]) => {
-          const mat = isMaternalRelative(n.id, n);
-          const pat = isPaternalRelative(n.id, n);
+          const mat = maternalIds.has(n.id);
+          const pat = paternalIds.has(n.id);
 
           if (mat) {
             if (uncleSpouseIds.includes(n.id)) return 10; // Eva Godoy (extremo izquierdo)
             if (uncleAuntIds.includes(n.id)) return 20;   // Luis Rodriguez (al lado de su hermana Rubi)
-            if (n.id === motherPerson?.id) return 30;    // Rubi (Madre, centro-izquierda)
+            if (n.id === motherId) return 30;             // Rubi (Madre, centro-izquierda)
             return 25;
           }
 
           if (pat) {
-            if (n.id === fatherPerson?.id) return 40;    // Jorge Andrés (Padre, centro-derecha)
+            if (n.id === fatherId) return 40;             // Jorge Andrés (Padre, centro-derecha)
             if (uncleAuntIds.includes(n.id)) return 50;   // Tío paterno (al lado de papá)
             if (uncleSpouseIds.includes(n.id)) return 60; // Pareja de tío paterno (extremo derecho)
             return 45;
           }
 
-          if (parentIds.includes(n.id)) return 35;
+          if (parentIds.includes(n.id)) return n.id === motherId ? 30 : 40;
           if (uncleAuntIds.includes(n.id)) return 22;
           return 25;
         };
@@ -788,8 +798,8 @@ export async function getFamilyGraph(
         // Abuelos / Bisabuelos:
         // Abuelos maternos a la izquierda, abuelos paternos a la derecha
         const getRank = (n: typeof rawNodes[0]) => {
-          if (isMaternalRelative(n.id, n) || motherParents.includes(n.id)) return 10;
-          if (isPaternalRelative(n.id, n) || fatherParents.includes(n.id)) return 30;
+          if (maternalIds.has(n.id)) return 10;
+          if (paternalIds.has(n.id)) return 30;
           return 20;
         };
         return getRank(a) - getRank(b);
@@ -798,7 +808,7 @@ export async function getFamilyGraph(
         const getRank = (n: typeof rawNodes[0]) => {
           if (childIds.includes(n.id)) return 20;
           if (nephewNieceIds.includes(n.id)) {
-            if (isMaternalRelative(n.id, n)) return 10;
+            if (maternalIds.has(n.id)) return 10;
             return 30;
           }
           if (grandChildIds.includes(n.id)) return 25;
