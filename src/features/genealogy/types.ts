@@ -101,3 +101,46 @@ export function formatFullName(person: {
     .join(" ");
 }
 
+/**
+ * Calcula la edad en años a partir de la fecha de nacimiento (YYYY-MM-DD),
+ * considerando si la persona ha fallecido (deathDate) o al día de hoy.
+ */
+export function calculateAge(
+  birthDate?: string | null,
+  deathDate?: string | null
+): number | null {
+  if (!birthDate) return null;
+  const parts = birthDate.split("-").map(Number);
+  if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) {
+    return null;
+  }
+  const [bYear, bMonth, bDay] = parts;
+
+  let endYear: number;
+  let endMonth: number;
+  let endDay: number;
+
+  if (deathDate) {
+    const dParts = deathDate.split("-").map(Number);
+    if (dParts.length >= 3 && !isNaN(dParts[0]) && !isNaN(dParts[1]) && !isNaN(dParts[2])) {
+      [endYear, endMonth, endDay] = dParts;
+    } else {
+      const now = new Date();
+      endYear = now.getFullYear();
+      endMonth = now.getMonth() + 1;
+      endDay = now.getDate();
+    }
+  } else {
+    const now = new Date();
+    endYear = now.getFullYear();
+    endMonth = now.getMonth() + 1;
+    endDay = now.getDate();
+  }
+
+  let age = endYear - bYear;
+  if (endMonth < bMonth || (endMonth === bMonth && endDay < bDay)) {
+    age--;
+  }
+  return Math.max(0, age);
+}
+

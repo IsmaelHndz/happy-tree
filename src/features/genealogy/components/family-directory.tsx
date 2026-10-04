@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { FamilyMemberItem } from "../types";
-import { formatFullName } from "../types";
+import { formatFullName, calculateAge } from "../types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
@@ -13,6 +13,7 @@ import {
   KeyRound,
   Pencil,
   UserPlus,
+  Cake,
 } from "lucide-react";
 
 interface FamilyDirectoryProps {
@@ -106,6 +107,7 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
             const initials = `${member.firstName[0] || ""}${member.lastName[0] || ""}`.toUpperCase();
             const isFemale = member.gender === "female";
             const isMale = member.gender === "male";
+            const age = calculateAge(member.birthDate, member.deathDate);
 
             return (
               <div
@@ -190,39 +192,50 @@ export function FamilyDirectory({ members }: FamilyDirectoryProps) {
                   </div>
                 </div>
 
-                {/* Acciones */}
-                <div className="pt-3 border-t border-neutral-800/60 flex items-center justify-between">
-                  <span className="text-[11px] text-neutral-500 font-mono">
-                    {member.birthDate ? `Nac. ${member.birthDate}` : "Sin fecha"}
-                  </span>
+                {/* Acciones & Edad Actual */}
+                <div className="pt-3 border-t border-neutral-800/60 flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+                  <div className="flex items-center gap-1.5 text-xs text-neutral-400 font-medium shrink-0">
+                    {age !== null ? (
+                      <span
+                        title={member.isLiving ? "Edad actual" : "Edad al fallecer"}
+                        className="inline-flex items-center gap-1.5 text-xs text-neutral-400 font-medium"
+                      >
+                        <Cake className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                        <span>{age} {age === 1 ? "año" : "años"}</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-neutral-600 font-mono" title="Fecha de nacimiento no registrada">—</span>
+                    )}
+                  </div>
 
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     {/* Botón para agregar familiares anclados a esta persona */}
                     <button
                       onClick={() => setActiveAddAnchor(member)}
-                      title={`Añadir familiar respecto a ${member.firstName}`}
-                      className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 bg-emerald-950/60 hover:bg-emerald-600 hover:text-white text-emerald-300 border border-emerald-800/50 rounded-lg transition"
+                      title={`Añadir pariente respecto a ${member.firstName}`}
+                      className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-emerald-950/60 hover:bg-emerald-600 hover:text-white text-emerald-300 border border-emerald-800/50 rounded-lg transition whitespace-nowrap shrink-0"
                     >
-                      <UserPlus className="w-3 h-3" />
-                      <span>+ Pariente</span>
+                      <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                      <span>Pariente</span>
                     </button>
 
                     <button
                       onClick={() => setActiveEditMember(member)}
                       title="Editar ficha"
-                      className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 bg-neutral-800/80 hover:bg-neutral-700 hover:text-white text-neutral-300 rounded-lg transition"
+                      className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-neutral-800/80 hover:bg-neutral-700 hover:text-white text-neutral-300 border border-neutral-700/60 rounded-lg transition whitespace-nowrap shrink-0"
                     >
-                      <Pencil className="w-3 h-3" />
+                      <Pencil className="w-3.5 h-3.5 shrink-0" />
                       <span>Editar</span>
                     </button>
 
                     {member.isLiving && !member.isClaimed && (
                       <button
                         onClick={() => setActiveInviteMember(member)}
-                        className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 bg-neutral-800 hover:bg-emerald-600 hover:text-white text-neutral-200 rounded-lg transition"
+                        title={member.invitationStatus === "pending" ? "Ver enlace de invitación" : "Generar invitación criptográfica"}
+                        className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-neutral-800/80 hover:bg-emerald-600 hover:text-white text-neutral-200 border border-neutral-700/60 rounded-lg transition whitespace-nowrap shrink-0"
                       >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>{member.invitationStatus === "pending" ? "Ver Enlace" : "Invitar"}</span>
+                        <KeyRound className="w-3.5 h-3.5 shrink-0" />
+                        <span>{member.invitationStatus === "pending" ? "Enlace" : "Invitar"}</span>
                       </button>
                     )}
                   </div>
