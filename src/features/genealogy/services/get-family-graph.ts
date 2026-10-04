@@ -681,11 +681,53 @@ export async function getFamilyGraph(
     }
   });
 
-  // 15. Cálculo de Posiciones Dinámicas por Generación
+  // 15. Cálculo de Posiciones Dinámicas por Generación con Distribución Bilateral Simétrica (Rama Materna vs Rama Paterna)
   const NODE_WIDTH = 220;
   const NODE_HEIGHT = 130;
   const GAP_X = 50;
   const GAP_Y = 150;
+
+  // Identificar progenitores del foco para separación simétrica de ramas
+  const motherPerson =
+    rawNodes.find(
+      (n) => parentIds.includes(n.id) && (n.gender === "female" || n.relationshipLabel.toLowerCase().includes("madre"))
+    ) || (parentIds.length > 0 ? rawNodes.find((n) => n.id === parentIds[0]) : null);
+
+  const fatherPerson =
+    rawNodes.find(
+      (n) => parentIds.includes(n.id) && n.id !== motherPerson?.id && (n.gender === "male" || n.relationshipLabel.toLowerCase().includes("padre"))
+    ) || (parentIds.length > 1 ? rawNodes.find((n) => n.id === parentIds[1]) : null);
+
+  const motherParents = motherPerson ? (parentsOf.get(motherPerson.id) || []) : [];
+  const fatherParents = fatherPerson ? (parentsOf.get(fatherPerson.id) || []) : [];
+
+  const isMaternalRelative = (personId: string, node: TreeNodeData): boolean => {
+    if (motherPerson && personId === motherPerson.id) return true;
+    const nParents = parentsOf.get(personId) || [];
+    if (motherParents.length > 0 && nParents.some((p) => motherParents.includes(p))) return true;
+    if (node.relationshipLabel.toLowerCase().includes("matern")) return true;
+    if (node.relationshipExplanation?.toLowerCase().includes("madre")) return true;
+    const partnerId = node.unionInfo?.partnerId;
+    if (partnerId) {
+      const partnerNode = rawNodes.find((rn) => rn.id === partnerId);
+      if (partnerNode && partnerId !== personId && isMaternalRelative(partnerId, partnerNode)) return true;
+    }
+    return false;
+  };
+
+  const isPaternalRelative = (personId: string, node: TreeNodeData): boolean => {
+    if (fatherPerson && personId === fatherPerson.id) return true;
+    const nParents = parentsOf.get(personId) || [];
+    if (fatherParents.length > 0 && nParents.some((p) => fatherParents.includes(p))) return true;
+    if (node.relationshipLabel.toLowerCase().includes("patern")) return true;
+    if (node.relationshipExplanation?.toLowerCase().includes("padre")) return true;
+    const partnerId = node.unionInfo?.partnerId;
+    if (partnerId) {
+      const partnerNode = rawNodes.find((rn) => rn.id === partnerId);
+      if (partnerNode && partnerId !== personId && isPaternalRelative(partnerId, partnerNode)) return true;
+    }
+    return false;
+  };
 
   const allGens = Array.from(new Set(rawNodes.map((n) => n.generation))).sort((a, b) => a - b);
   const minGen = Math.min(...allGens, 0);
@@ -696,34 +738,71 @@ export async function getFamilyGraph(
     const count = genNodes.length;
     if (count === 0) return;
 
-    // Ordenamiento inteligente en cada fila para asegurar cohesión visual:
+    // Ordenamiento inteligente en cada fila para asegurar cohesión visual y distribución por ramas familiares:
     genNodes.sort((a, b) => {
       if (gen === 0) {
         const getRank = (n: typeof rawNodes[0]) => {
-          if (spouseIds.includes(n.id)) return 1;
-          if (n.id === centerPersonId) return 2;
-          if (siblingIds.includes(n.id)) return 3;
-          if (siblingSpouseIds.includes(n.id)) return 4;
-          return 5;
+          if (n.id === centerPersonId) return 20;
+          if (spouseIds.includes(n.id)) return 10;
+          if (siblingIds.includes(n.id)) {
+            const isMat = isMaternalRelative(n.id, n);
+            const isPat = isPaternalRelative(n.id, n);
+            if (isMat && !isPat) return 15; // Medio hermano materno hacia la izquierda
+            if (isPat && !isMat) return 25; // Medio hermano paterno hacia la derecha
+            return 22; // Hermano de ambos progenitores
+          }
+          if (siblingSpouseIds.includes(n.id)) return 30;
+          if (isMaternalRelative(n.id, n)) return 5;
+          if (isPaternalRelative(n.id, n)) return 35;
+          return 20;
         };
         return getRank(a) - getRank(b);
-      } else if (gen < 0) {
-        // Padres directos al centro/frente, luego tíos y sus parejas
+      } else if (gen === -1) {
+        // Generación de Progenitores y Tíos:
+        // Rama materna a la izquierda (pareja de tío materno -> tío materno -> madre)
+        // Rama paterna a la derecha (padre -> tío paterno -> pareja de tío paterno)
         const getRank = (n: typeof rawNodes[0]) => {
-          if (parentIds.includes(n.id)) return 1;
-          if (grandParentIds.includes(n.id)) return 2;
-          if (uncleAuntIds.includes(n.id)) return 3;
-          if (uncleSpouseIds.includes(n.id)) return 4;
-          return 5;
+          const mat = isMaternalRelative(n.id, n);
+          const pat = isPaternalRelative(n.id, n);
+
+          if (mat) {
+            if (uncleSpouseIds.includes(n.id)) return 10; // Eva Godoy (extremo izquierdo)
+            if (uncleAuntIds.includes(n.id)) return 20;   // Luis Rodriguez (al lado de su hermana Rubi)
+            if (n.id === motherPerson?.id) return 30;    // Rubi (Madre, centro-izquierda)
+            return 25;
+          }
+
+          if (pat) {
+            if (n.id === fatherPerson?.id) return 40;    // Jorge Andrés (Padre, centro-derecha)
+            if (uncleAuntIds.includes(n.id)) return 50;   // Tío paterno (al lado de papá)
+            if (uncleSpouseIds.includes(n.id)) return 60; // Pareja de tío paterno (extremo derecho)
+            return 45;
+          }
+
+          if (parentIds.includes(n.id)) return 35;
+          if (uncleAuntIds.includes(n.id)) return 22;
+          return 25;
+        };
+        return getRank(a) - getRank(b);
+      } else if (gen < -1) {
+        // Abuelos / Bisabuelos:
+        // Abuelos maternos a la izquierda, abuelos paternos a la derecha
+        const getRank = (n: typeof rawNodes[0]) => {
+          if (isMaternalRelative(n.id, n) || motherParents.includes(n.id)) return 10;
+          if (isPaternalRelative(n.id, n) || fatherParents.includes(n.id)) return 30;
+          return 20;
         };
         return getRank(a) - getRank(b);
       } else {
-        // Hijos directos primero, luego sobrinos o nietos
+        // Hijos directos al centro, sobrinos hacia la rama de su padre/madre
         const getRank = (n: typeof rawNodes[0]) => {
-          if (childIds.includes(n.id)) return 1;
-          if (nephewNieceIds.includes(n.id)) return 2;
-          if (grandChildIds.includes(n.id)) return 3;
-          return 4;
+          if (childIds.includes(n.id)) return 20;
+          if (nephewNieceIds.includes(n.id)) {
+            if (isMaternalRelative(n.id, n)) return 10;
+            return 30;
+          }
+          if (grandChildIds.includes(n.id)) return 25;
+          return 20;
         };
         return getRank(a) - getRank(b);
       }
