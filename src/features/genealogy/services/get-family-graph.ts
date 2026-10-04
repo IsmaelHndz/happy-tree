@@ -713,6 +713,8 @@ export async function getFamilyGraph(
   fatherParents.forEach((id) => paternalIds.add(id));
 
   rawNodes.forEach((n) => {
+    if (n.id === fatherId || n.id === motherId) return;
+
     const nParents = parentsOf.get(n.id) || [];
     const label = (n.relationshipLabel || "").toLowerCase();
     const explanation = (n.relationshipExplanation || "").toLowerCase();
@@ -730,14 +732,19 @@ export async function getFamilyGraph(
     }
   });
 
-  // Parejas de tíos o cónyuges (un solo paso plano sin llamadas recursivas)
+  // Parejas de tíos o cónyuges (un solo paso plano sin llamadas recursivas, sin cruzar unión de los padres)
   rawNodes.forEach((n) => {
+    if (n.id === motherId || n.id === fatherId) return;
     const partnerId = n.unionInfo?.partnerId;
     if (partnerId) {
+      if (partnerId === motherId || partnerId === fatherId) return;
       if (maternalIds.has(partnerId)) maternalIds.add(n.id);
       if (paternalIds.has(partnerId)) paternalIds.add(n.id);
     }
   });
+
+  if (fatherId) maternalIds.delete(fatherId);
+  if (motherId) paternalIds.delete(motherId);
 
   const allGens = Array.from(new Set(rawNodes.map((n) => n.generation))).sort((a, b) => a - b);
   const minGen = Math.min(...allGens, 0);
@@ -772,25 +779,27 @@ export async function getFamilyGraph(
         // Rama materna a la izquierda (pareja de tío materno -> tío materno -> madre)
         // Rama paterna a la derecha (padre -> tío paterno -> pareja de tío paterno)
         const getRank = (n: typeof rawNodes[0]) => {
+          // Progenitores directos del foco (prioridad canónica fija)
+          if (n.id === motherId) return 30;             // Madre (Rubi, centro-izquierda)
+          if (n.id === fatherId) return 40;             // Padre (Jorge Andrés, centro-derecha)
+
           const mat = maternalIds.has(n.id);
           const pat = paternalIds.has(n.id);
 
-          if (mat) {
+          if (mat && !pat) {
             if (uncleSpouseIds.includes(n.id)) return 10; // Eva Godoy (extremo izquierdo)
             if (uncleAuntIds.includes(n.id)) return 20;   // Luis Rodriguez (al lado de su hermana Rubi)
-            if (n.id === motherId) return 30;             // Rubi (Madre, centro-izquierda)
             return 25;
           }
 
-          if (pat) {
-            if (n.id === fatherId) return 40;             // Jorge Andrés (Padre, centro-derecha)
+          if (pat && !mat) {
             if (uncleAuntIds.includes(n.id)) return 50;   // Tío paterno (al lado de papá)
             if (uncleSpouseIds.includes(n.id)) return 60; // Pareja de tío paterno (extremo derecho)
             return 45;
           }
 
-          if (parentIds.includes(n.id)) return n.id === motherId ? 30 : 40;
-          if (uncleAuntIds.includes(n.id)) return 22;
+          if (uncleSpouseIds.includes(n.id)) return 10;
+          if (uncleAuntIds.includes(n.id)) return 20;
           return 25;
         };
         return getRank(a) - getRank(b);
