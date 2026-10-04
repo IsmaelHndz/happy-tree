@@ -3,7 +3,9 @@ import type { Gender } from "@/types/database.types";
 export interface KinshipPersonMeta {
   id: string;
   firstName: string;
+  middleName?: string | null;
   lastName: string;
+  maternalLastName?: string | null;
   gender: Gender;
 }
 
@@ -120,13 +122,81 @@ export function inferKinship({
     .filter((e) => e.child_id === targetPersonId)
     .map((e) => e.parent_id);
 
+  // 3.1 Padrastro / Madrastra (Cónyuge o Pareja de un progenitor de la raíz que no es progenitor biológico de la raíz)
+  if (rootParentIds.length > 0 && !rootParentIds.includes(targetPersonId)) {
+    const stepParentUnion = unions.find(
+      (u) =>
+        u.status !== "rejected" &&
+        ((rootParentIds.includes(u.person_a_id) && u.person_b_id === targetPersonId) ||
+         (rootParentIds.includes(u.person_b_id) && u.person_a_id === targetPersonId))
+    );
+
+    if (stepParentUnion) {
+      const connectedParentId = rootParentIds.includes(stepParentUnion.person_a_id)
+        ? stepParentUnion.person_a_id
+        : stepParentUnion.person_b_id;
+      const connectedParent = personsMap?.get(connectedParentId);
+      const isMaternal = connectedParent?.gender === "female";
+      const parentName = connectedParent ? connectedParent.firstName : "";
+
+      const rootMeta = personsMap?.get(rootPersonId);
+      const targetMeta = personsMap?.get(targetPersonId);
+      const surnameDivergence =
+        rootMeta?.lastName && targetMeta?.lastName &&
+        rootMeta.lastName.trim().toLowerCase() !== targetMeta.lastName.trim().toLowerCase();
+
+      return {
+        relationshipLabel: isFemale ? "Madrastra" : isMale ? "Padrastro" : "Padrastro/Madrastra",
+        relationshipCategory: "parent",
+        explanation: `Cónyuge/pareja de tu ${isMaternal ? "madre" : "padre"} ${parentName}${
+          surnameDivergence ? ` (apellidos distintos: ${targetMeta?.lastName ?? ""})` : ""
+        }`.trim(),
+        degree: 1,
+      };
+    }
+  }
+
+  // 3.2 Hijastro / Hijastra (Hijo/a de la pareja de la raíz que no es hijo biológico de la raíz)
+  const rootSpouses = unions
+    .filter((u) => u.status !== "rejected")
+    .map((u) => (u.person_a_id === rootPersonId ? u.person_b_id : u.person_b_id === rootPersonId ? u.person_a_id : null))
+    .filter(Boolean) as string[];
+
+  const rootChildIds = parentEdges
+    .filter((e) => e.parent_id === rootPersonId)
+    .map((e) => e.child_id);
+
+  if (rootSpouses.length > 0 && !rootChildIds.includes(targetPersonId)) {
+    const isChildOfSpouse = rootSpouses.some((spId) => targetParentIds.includes(spId));
+    if (isChildOfSpouse) {
+      const spouseId = rootSpouses.find((spId) => targetParentIds.includes(spId))!;
+      const spouseObj = personsMap?.get(spouseId);
+      return {
+        relationshipLabel: isFemale ? "Hijastra" : isMale ? "Hijastro" : "Hijastro/a",
+        relationshipCategory: "child",
+        explanation: `Hijo/a de tu pareja ${spouseObj?.firstName ?? ""}`.trim(),
+        degree: 1,
+      };
+    }
+  }
+
   const sharedParentIds = rootParentIds.filter((pId) => targetParentIds.includes(pId));
 
   // 4. Hermanos o Medios Hermanos
   if (sharedParentIds.length > 0) {
+    const rootMeta = personsMap?.get(rootPersonId);
+    const targetMeta = personsMap?.get(targetPersonId);
+
+    const differentPaternal = Boolean(
+      rootMeta?.lastName &&
+      targetMeta?.lastName &&
+      rootMeta.lastName.trim().toLowerCase() !== targetMeta.lastName.trim().toLowerCase()
+    );
+
+    // Son hermanos completos si comparten 2 progenitores O si tienen un solo progenitor registrado pero sus apellidos coinciden plenamente
     const isFullSibling =
       sharedParentIds.length >= 2 ||
-      (rootParentIds.length === 1 && targetParentIds.length === 1);
+      (rootParentIds.length === 1 && targetParentIds.length === 1 && !differentPaternal);
 
     if (isFullSibling) {
       return {
@@ -137,11 +207,14 @@ export function inferKinship({
       };
     } else {
       const commonParent = personsMap?.get(sharedParentIds[0]);
-      const parentName = commonParent ? `por parte de ${commonParent.firstName}` : "";
+      const isMaternal = commonParent?.gender === "female";
+      const parentName = commonParent ? `por parte de tu ${isMaternal ? "madre" : "padre"} ${commonParent.firstName}` : "";
+      const surnameNote = differentPaternal ? "(diferente apellido paterno)" : "";
+
       return {
         relationshipLabel: isFemale ? "Media hermana" : isMale ? "Medio hermano" : "Medio hermano/a",
         relationshipCategory: "sibling",
-        explanation: `Hermano/a ${parentName}`.trim(),
+        explanation: `Medio/a hermano/a ${parentName} ${surnameNote}`.trim(),
         degree: 2,
       };
     }
@@ -172,10 +245,6 @@ export function inferKinship({
   }
 
   // 6. Nietos (hijos de los hijos)
-  const rootChildIds = parentEdges
-    .filter((e) => e.parent_id === rootPersonId)
-    .map((e) => e.child_id);
-
   if (rootChildIds.length > 0) {
     const connectingChildId = rootChildIds.find((cId) =>
       parentEdges.some((e) => e.parent_id === cId && e.child_id === targetPersonId)
@@ -282,11 +351,6 @@ export function inferKinship({
 
   // 10. Familia Política (Familiares por Unión Conyugal)
   // Cuñado/a (hermano de cónyuge o cónyuge de hermano)
-  const rootSpouses = unions
-    .filter((u) => u.status !== "rejected")
-    .map((u) => (u.person_a_id === rootPersonId ? u.person_b_id : u.person_b_id === rootPersonId ? u.person_a_id : null))
-    .filter(Boolean) as string[];
-
   // 10.1 Hermano de tu cónyuge -> Cuñado/a
   for (const spId of rootSpouses) {
     const spParentIds = parentEdges.filter((e) => e.child_id === spId).map((e) => e.parent_id);
