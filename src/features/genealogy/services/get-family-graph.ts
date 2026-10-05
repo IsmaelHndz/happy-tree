@@ -5,6 +5,7 @@ import type { TreePermissionTier } from "../types";
 import { inferKinship, getConnectedFamilyIds } from "../utils/kinship-inference";
 import { partitionUnionsByIntegrity } from "../utils/graph-integrity";
 import { computeTreeLayout } from "../utils/tree-layout";
+import { assignGenerations, selectVisibleNodeIds } from "../utils/visible-nodes";
 import { isMissingColumnError, MISSING_NAME_COLUMNS_MESSAGE } from "../utils/db-errors";
 import { formatFullName } from "../types";
 
@@ -148,7 +149,7 @@ export async function getFamilyGraph(
   // 4. Consultar todas las aristas verticales (padres e hijos) y uniones conyugales
   const { data: allParentEdges } = await supabase
     .from("parent_child_edges")
-    .select("id, parent_id, child_id, relationship_type");
+    .select("id, parent_id, child_id, relationship_type").neq("status", "rejected");
 
   const { data: allUnions } = await supabase
     .from("union_edges")
@@ -259,176 +260,25 @@ export async function getFamilyGraph(
     };
   }
 
-  // 7. Identificar relaciones directas respecto al nodo central (centerPersonId)
-  const parentIds = allParentEdges?.filter((e) => e.child_id === centerPersonId).map((e) => e.parent_id) ?? [];
-  const childIds = allParentEdges?.filter((e) => e.parent_id === centerPersonId).map((e) => e.child_id) ?? [];
-
-  const spouseIds = [
-    ...treeVisibleUnions.filter((u) => u.person_a_id === centerPersonId).map((u) => u.person_b_id),
-    ...treeVisibleUnions.filter((u) => u.person_b_id === centerPersonId).map((u) => u.person_a_id),
-  ];
-
-  // Hermanos (hijos de los padres del nodo central que no sean el nodo central)
-  let siblingIds: string[] = [];
-  if (parentIds.length > 0) {
-    siblingIds = Array.from(
-      new Set(
-        allParentEdges
-          ?.filter((e) => parentIds.includes(e.parent_id) && e.child_id !== centerPersonId)
-          .map((e) => e.child_id) ?? []
-      )
-    );
-  }
-
-  // Abuelos (padres de los padres)
-  const grandParentIds: string[] = [];
-  if (parentIds.length > 0) {
-    const gps = allParentEdges?.filter((e) => parentIds.includes(e.child_id)).map((e) => e.parent_id) ?? [];
-    grandParentIds.push(...gps);
-  }
-
-  // Parejas de hermanos
-  const siblingSpouseIds: string[] = [];
-  siblingIds.forEach((sibId) => {
-    const sSpouses = [
-      ...treeVisibleUnions.filter((u) => u.person_a_id === sibId).map((u) => u.person_b_id),
-      ...treeVisibleUnions.filter((u) => u.person_b_id === sibId).map((u) => u.person_a_id),
-    ];
-    siblingSpouseIds.push(...sSpouses);
+  // 7-8. Personas visibles según el nodo central y el nivel de permisos (lógica pura en utils/visible-nodes.ts)
+  const {
+    nodeIds,
+    parentIds,
+    childIds,
+    spouseIds,
+    siblingIds,
+    grandParentIds,
+    siblingSpouseIds,
+    uncleAuntIds,
+    uncleSpouseIds,
+    nephewNieceIds,
+  } = selectVisibleNodeIds({
+    centerPersonId,
+    parentEdges: allParentEdges ?? [],
+    unions: treeVisibleUnions,
+    tier: isViewerGuest ? viewerTier ?? "basic" : "owner",
   });
 
-  // Nietos (hijos de los hijos)
-  let grandChildIds: string[] = [];
-  if (childIds.length > 0) {
-    grandChildIds = allParentEdges?.filter((e) => childIds.includes(e.parent_id)).map((e) => e.child_id) ?? [];
-  }
-
-  // Tíos (hermanos de los padres)
-  let uncleAuntIds: string[] = [];
-  if (grandParentIds.length > 0) {
-    uncleAuntIds = Array.from(
-      new Set(
-        allParentEdges
-          ?.filter((e) => grandParentIds.includes(e.parent_id) && !parentIds.includes(e.child_id))
-          .map((e) => e.child_id) ?? []
-      )
-    );
-  }
-
-  // Parejas de tíos (por ejemplo la tía política / esposa del tío)
-  const uncleSpouseIds: string[] = [];
-  uncleAuntIds.forEach((uId) => {
-    const uSpouses = [
-      ...treeVisibleUnions.filter((u) => u.person_a_id === uId).map((u) => u.person_b_id),
-      ...treeVisibleUnions.filter((u) => u.person_b_id === uId).map((u) => u.person_a_id),
-    ];
-    uncleSpouseIds.push(...uSpouses);
-  });
-
-  // Primos hermanos (hijos de tíos)
-  let cousinIds: string[] = [];
-  if (uncleAuntIds.length > 0) {
-    cousinIds = Array.from(
-      new Set(
-        allParentEdges
-          ?.filter((e) => uncleAuntIds.includes(e.parent_id))
-          .map((e) => e.child_id) ?? []
-      )
-    );
-  }
-
-  // Sobrinos (hijos de los hermanos)
-  let nephewNieceIds: string[] = [];
-  if (siblingIds.length > 0) {
-    nephewNieceIds = Array.from(
-      new Set(
-        allParentEdges
-          ?.filter((e) => siblingIds.includes(e.parent_id))
-          .map((e) => e.child_id) ?? []
-      )
-    );
-  }
-
-  // 8. FILTRADO POR NIVELES DE PERMISOS:
-  let allowedNodeIds: string[] = [];
-
-  if (isViewerGuest && viewerTier === "basic") {
-    // Nivel Básico: Únicamente familia de casa (Padres, Hermanos, Cónyuge, Hijos)
-    allowedNodeIds = [
-      centerPersonId,
-      ...parentIds,
-      ...childIds,
-      ...spouseIds,
-      ...siblingIds,
-    ];
-  } else if (isViewerGuest && viewerTier === "intermediate") {
-    // Nivel Intermedio: Familia de casa + extendida (Abuelos, Tíos, Primos, Sobrinos, Nietos, Parejas de tíos)
-    allowedNodeIds = [
-      centerPersonId,
-      ...parentIds,
-      ...childIds,
-      ...spouseIds,
-      ...siblingIds,
-      ...grandParentIds,
-      ...siblingSpouseIds,
-      ...grandChildIds,
-      ...uncleAuntIds,
-      ...uncleSpouseIds,
-      ...cousinIds,
-      ...nephewNieceIds,
-    ];
-  } else {
-    // Nivel Avanzado o visualización de árbol propio: Grafo completo
-    allowedNodeIds = [
-      centerPersonId,
-      ...parentIds,
-      ...grandParentIds,
-      ...childIds,
-      ...spouseIds,
-      ...siblingIds,
-      ...siblingSpouseIds,
-      ...grandChildIds,
-      ...uncleAuntIds,
-      ...uncleSpouseIds,
-      ...cousinIds,
-      ...nephewNieceIds,
-    ];
-  }
-
-  // 8.1 Familias ensambladas (excepto nivel básico): completar cada núcleo familiar visible con
-  //   - los otros progenitores de tíos, hermanos, hijos, nietos, sobrinos y primos
-  //     (p. ej. el padre de un medio hermano o el segundo esposo de la abuela)
-  //   - las parejas de todas las personas visibles (padrastros, yernos/nueras, parejas de abuelos, etc.)
-  //   - los hijos de esas parejas políticas (hijastros, p. ej. los hijos de la esposa de un tío con su expareja)
-  if (!(isViewerGuest && viewerTier === "basic")) {
-    const visible = new Set(allowedNodeIds);
-    const descendantLike = new Set([
-      ...uncleAuntIds,
-      ...siblingIds,
-      ...childIds,
-      ...grandChildIds,
-      ...nephewNieceIds,
-      ...cousinIds,
-    ]);
-    allParentEdges?.forEach((e) => {
-      if (descendantLike.has(e.child_id) && visible.has(e.child_id)) visible.add(e.parent_id);
-    });
-
-    const inLawIds = new Set([...spouseIds, ...siblingSpouseIds, ...uncleSpouseIds]);
-    const withPartners = new Set(visible);
-    treeVisibleUnions.forEach((u) => {
-      if (visible.has(u.person_a_id) && !visible.has(u.person_b_id)) inLawIds.add(u.person_b_id);
-      if (visible.has(u.person_b_id) && !visible.has(u.person_a_id)) inLawIds.add(u.person_a_id);
-      if (visible.has(u.person_a_id)) withPartners.add(u.person_b_id);
-      if (visible.has(u.person_b_id)) withPartners.add(u.person_a_id);
-    });
-    allParentEdges?.forEach((e) => {
-      if (inLawIds.has(e.parent_id)) withPartners.add(e.child_id);
-    });
-    allowedNodeIds = Array.from(withPartners);
-  }
-
-  const nodeIds = Array.from(new Set(allowedNodeIds));
 
   // 9. Consultar los datos de todas las personas autorizadas en el grafo
   type PersonQueryResult = {
@@ -522,70 +372,11 @@ export async function getFamilyGraph(
   );
 
   // 12. Motor Topológico de Generaciones por BFS a partir del nodo central (centerPersonId = 0)
-  const parentsOf = new Map<string, string[]>();
-  const childrenOf = new Map<string, string[]>();
-  const spousesOf = new Map<string, string[]>();
-
-  allParentEdges?.forEach((e) => {
-    const cList = childrenOf.get(e.parent_id) || [];
-    if (!cList.includes(e.child_id)) cList.push(e.child_id);
-    childrenOf.set(e.parent_id, cList);
-
-    const pList = parentsOf.get(e.child_id) || [];
-    if (!pList.includes(e.parent_id)) pList.push(e.parent_id);
-    parentsOf.set(e.child_id, pList);
+  const genMap = assignGenerations({
+    centerPersonId,
+    parentEdges: allParentEdges ?? [],
+    unions: treeVisibleUnions,
   });
-
-  treeVisibleUnions.forEach((u) => {
-    const aSpouses = spousesOf.get(u.person_a_id) || [];
-    if (!aSpouses.includes(u.person_b_id)) aSpouses.push(u.person_b_id);
-    spousesOf.set(u.person_a_id, aSpouses);
-
-    const bSpouses = spousesOf.get(u.person_b_id) || [];
-    if (!bSpouses.includes(u.person_a_id)) bSpouses.push(u.person_a_id);
-    spousesOf.set(u.person_b_id, bSpouses);
-  });
-
-  const genMap = new Map<string, number>();
-  genMap.set(centerPersonId, 0);
-
-  const bfsQueue: string[] = [centerPersonId];
-  const visited = new Set<string>([centerPersonId]);
-
-  while (bfsQueue.length > 0) {
-    const currId = bfsQueue.shift()!;
-    const currGen = genMap.get(currId) ?? 0;
-
-    // Progenitores (un nivel arriba: -1)
-    const pList = parentsOf.get(currId) || [];
-    pList.forEach((pId) => {
-      if (!visited.has(pId)) {
-        visited.add(pId);
-        genMap.set(pId, currGen - 1);
-        bfsQueue.push(pId);
-      }
-    });
-
-    // Hijos (un nivel abajo: +1)
-    const cList = childrenOf.get(currId) || [];
-    cList.forEach((cId) => {
-      if (!visited.has(cId)) {
-        visited.add(cId);
-        genMap.set(cId, currGen + 1);
-        bfsQueue.push(cId);
-      }
-    });
-
-    // Parejas / Cónyuges (mismo nivel generacional: 0)
-    const sList = spousesOf.get(currId) || [];
-    sList.forEach((sId) => {
-      if (!visited.has(sId)) {
-        visited.add(sId);
-        genMap.set(sId, currGen);
-        bfsQueue.push(sId);
-      }
-    });
-  }
 
   // 13. Construir nodos con cálculo generacional exacto y afinidades
   const rawNodes: TreeNodeData[] = persons.map((p) => {

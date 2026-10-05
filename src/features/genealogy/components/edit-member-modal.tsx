@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   updateFamilyMemberAction,
@@ -8,31 +8,15 @@ import {
   updateUnionStatusAction,
   dissolveUnionAction,
   resetPersonClaimAction,
-  updatePersonParentsAction,
   unlinkParentChildAction,
-  convertParentToSiblingAction,
+  getMemberRelationsAction,
+  type MemberRelations,
 } from "@/features/genealogy/actions";
-import {
-  X,
-  Pencil,
-  Calendar,
-  MapPin,
-  FileText,
-  AlertCircle,
-  Loader2,
-  Trash2,
-  CheckCircle2,
-  ShieldCheck,
-  Heart,
-  HeartCrack,
-  Mail,
-  RotateCcw,
-  Sparkles,
-  GitFork,
-  Plus,
-  Users,
-} from "lucide-react";
-import type { Gender } from "@/types/database.types";
+import { X, AlertCircle, Loader2, Trash2, CheckCircle2, ShieldCheck, RotateCcw, Plus, ChevronDown } from "lucide-react";
+import type { Gender, UnionType } from "@/types/database.types";
+import { formatFullName } from "../types";
+import { LinkComposer } from "./link-composer";
+import type { LinkRelation } from "../utils/link-planner";
 
 export interface EditableMemberData {
   id: string;
@@ -52,46 +36,64 @@ export interface EditableMemberData {
   relationshipCategory?: "parent" | "child" | "spouse" | "sibling" | "other" | "self";
   relationshipExplanation?: string;
   accountEmail?: string | null;
-  parentConnections?: {
-    id: string;
-    parentId: string;
-    parentName: string;
-    relationshipType: string;
-  }[];
-  childConnections?: {
-    id: string;
-    childId: string;
-    childName: string;
-    relationshipType: string;
-  }[];
-  unionInfo?: {
-    id: string;
-    unionType: "married" | "civil_union" | "divorced" | "separated" | "partner";
-    partnerId: string;
-  } | null;
 }
 
 interface EditMemberModalProps {
   member: EditableMemberData;
   availableFamilyMembers?: { id: string; name: string }[];
-  viewerParents?: { id: string; name: string }[];
   isUserZero?: boolean;
   isSelf?: boolean;
   isOpen: boolean;
   onClose: () => void;
 }
 
+const UNION_LABELS: Record<UnionType, string> = {
+  married: "Casados",
+  partner: "Unión libre",
+  civil_union: "Unión civil",
+  separated: "Separados",
+  divorced: "Divorciados",
+};
+
+const inputClass =
+  "w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2.5 px-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500 transition disabled:opacity-60";
+const labelClass = "block text-xs font-medium text-neutral-300 mb-1.5";
+
+function segmentClass(active: boolean) {
+  return `flex-1 px-3 py-2 rounded-lg text-xs font-medium transition border ${
+    active
+      ? "bg-emerald-600 border-emerald-500 text-white"
+      : "bg-neutral-950 border-neutral-800 text-neutral-300 hover:border-neutral-600 hover:text-white"
+  }`;
+}
+
+function Row({ name, detail, action }: { name: string; detail?: string; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-neutral-950/60 border border-neutral-800 text-xs">
+      <div className="min-w-0">
+        <span className="text-white font-medium block truncate">{name}</span>
+        {detail && <span className="text-[11px] text-neutral-500">{detail}</span>}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+
 export function EditMemberModal({
   member,
-  availableFamilyMembers,
-  viewerParents,
+  availableFamilyMembers = [],
   isUserZero = false,
   isSelf = false,
   isOpen,
   onClose,
 }: EditMemberModalProps) {
   const router = useRouter();
-  const isClaimedOther = Boolean(member.isClaimed && !isSelf);
+  const isReadOnly = Boolean(member.isClaimed && !isSelf);
+  const [tab, setTab] = useState<"datos" | "familia">("datos");
+
+  // ---------------------------------------------------------------- Datos
   const [firstName, setFirstName] = useState(member.firstName);
   const [middleName, setMiddleName] = useState(member.middleName || "");
   const [lastName, setLastName] = useState(member.lastName);
@@ -103,110 +105,30 @@ export function EditMemberModal({
   const [deathDate, setDeathDate] = useState(member.deathDate || "");
   const [birthPlace, setBirthPlace] = useState(member.birthPlace || "");
   const [bio, setBio] = useState(member.bio || "");
+  const [showMore, setShowMore] = useState(Boolean(member.maidenName));
 
-  // Estado conyugal si aplica
-  const [unionType, setUnionType] = useState<"married" | "civil_union" | "divorced" | "separated" | "partner">(
-    member.unionInfo?.unionType || "married"
-  );
-  const [isUpdatingUnion, setIsUpdatingUnion] = useState(false);
-  const [confirmUpdateUnion, setConfirmUpdateUnion] = useState(false);
-  const [isDissolvingUnion, setIsDissolvingUnion] = useState(false);
-  const [confirmDissolve, setConfirmDissolve] = useState(false);
-  const [unionSuccessMessage, setUnionSuccessMessage] = useState<string | null>(null);
-
-  // Estado para resetear / liberar ficha
-  const [isResettingClaim, setIsResettingClaim] = useState(false);
-  const [confirmResetClaim, setConfirmResetClaim] = useState(false);
-  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
-
-  // Estado para corrección de progenitores (Padres)
-  const [parentIds, setParentIds] = useState<string[]>(
-    member.parentConnections?.map((p) => p.parentId) || []
-  );
-  const [relationshipType, setRelationshipType] = useState<"biological" | "adopted" | "foster" | "step">(
-    (member.parentConnections?.[0]?.relationshipType as "biological" | "adopted" | "foster" | "step") || "biological"
-  );
-  const [selectedNewParentId, setSelectedNewParentId] = useState<string>("");
-  const [isUpdatingParents, setIsUpdatingParents] = useState(false);
-  const [parentSuccessMessage, setParentSuccessMessage] = useState<string | null>(null);
-
-  const [isPending, setIsPending] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmResetClaim, setConfirmResetClaim] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  // Estado para descendencia (Hijos registrados)
-  const [children, setChildren] = useState(member.childConnections || []);
-  const [isUnlinkingChildId, setIsUnlinkingChildId] = useState<string | null>(null);
-  const [childSuccessMessage, setChildSuccessMessage] = useState<string | null>(null);
+  // Validación en vivo de fechas (antes de enviar)
+  const dateProblem =
+    birthDate && birthDate > today()
+      ? "La fecha de nacimiento está en el futuro."
+      : !isLiving && deathDate && deathDate > today()
+      ? "La fecha de fallecimiento está en el futuro."
+      : !isLiving && deathDate && birthDate && deathDate < birthDate
+      ? "La fecha de fallecimiento es anterior al nacimiento."
+      : null;
 
-  // Estado para reasignación de rol (Convertir en Hermano/a)
-  const [isConvertingRole, setIsConvertingRole] = useState(false);
-  const [convertSuccessMessage, setConvertSuccessMessage] = useState<string | null>(null);
-
-  const handleUnlinkChild = async (childId: string) => {
-    setIsUnlinkingChildId(childId);
-    setError(null);
-    setChildSuccessMessage(null);
-    const res = await unlinkParentChildAction({ parentId: member.id, childId });
-    setIsUnlinkingChildId(null);
-    if (res.error) {
-      setError(res.error);
-    } else {
-      setChildren((prev) => prev.filter((c) => c.childId !== childId));
-      setChildSuccessMessage("Filiación eliminada con éxito.");
-      router.refresh();
-    }
-  };
-
-  const handleConvertToSibling = async (anchorChildId: string) => {
-    setIsConvertingRole(true);
-    setError(null);
-    setConvertSuccessMessage(null);
-    const res = await convertParentToSiblingAction({
-      personId: member.id,
-      anchorPersonId: anchorChildId,
-      siblingType: "both",
-    });
-    setIsConvertingRole(false);
-    if (res.error) {
-      setError(res.error);
-    } else {
-      setConvertSuccessMessage("¡Rol reasignado exitosamente como hermano/a de la familia!");
-      setChildren([]);
-      router.refresh();
-    }
-  };
-
-  const handleAssignViewerParents = async () => {
-    if (!viewerParents || viewerParents.length === 0) return;
-    const newIds = viewerParents.map((p) => p.id);
-    setParentIds(newIds);
-    setIsUpdatingParents(true);
-    setError(null);
-    setParentSuccessMessage(null);
-
-    const res = await updatePersonParentsAction({
-      personId: member.id,
-      parentIds: newIds,
-      relationshipType: "biological",
-    });
-
-    setIsUpdatingParents(false);
-    if (res.error) {
-      setError(res.error);
-    } else {
-      setParentSuccessMessage(
-        `¡Vinculado/a como hermano/a exitosamente! Se asignaron a tus progenitores (${viewerParents.map((p) => p.name).join(" y ")}).`
-      );
-      router.refresh();
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setIsPending(true);
+    if (dateProblem) return;
+    setIsSaving(true);
     setError(null);
 
     const formData = new FormData();
@@ -224,108 +146,21 @@ export function EditMemberModal({
     formData.set("bio", bio);
 
     const result = await updateFamilyMemberAction(formData);
+    setIsSaving(false);
 
     if (result.error) {
-      setIsPending(false);
       setError(result.error);
       return;
     }
-
-    // Si los progenitores cambiaron respecto a los iniciales, guardarlos también automáticamente
-    const initialParentIds = (member.parentConnections?.map((p) => p.parentId) || []).sort();
-    const currentParentIds = [...parentIds].sort();
-    const parentsChanged =
-      initialParentIds.length !== currentParentIds.length ||
-      initialParentIds.some((id, idx) => id !== currentParentIds[idx]);
-
-    if (parentsChanged) {
-      const parentsResult = await updatePersonParentsAction({
-        personId: member.id,
-        parentIds,
-        relationshipType,
-      });
-
-      if (parentsResult.error) {
-        setIsPending(false);
-        setError(parentsResult.error);
-        return;
-      }
-    }
-
-    setIsPending(false);
+    setSaved(true);
     router.refresh();
-    setSuccess(true);
-    setTimeout(() => {
-      onClose();
-    }, 700);
-  };
-
-  const handleUpdateUnionStatus = async () => {
-    if (!member.unionInfo) return;
-    setIsUpdatingUnion(true);
-    setError(null);
-    setUnionSuccessMessage(null);
-
-    const res = await updateUnionStatusAction({
-      personAId: member.id,
-      personBId: member.unionInfo.partnerId,
-      unionType,
-    });
-
-    setIsUpdatingUnion(false);
-    setConfirmUpdateUnion(false);
-    if (res.error) {
-      setError(res.error);
-    } else {
-      router.refresh();
-      setUnionSuccessMessage("Estado de pareja actualizado correctamente.");
-      setTimeout(() => setUnionSuccessMessage(null), 3000);
-    }
-  };
-
-  const handleDissolveUnion = async (deletePersonEntirely = false) => {
-    if (!member.unionInfo) return;
-
-    setIsDissolvingUnion(true);
-    setError(null);
-    setUnionSuccessMessage(null);
-
-    const res = await dissolveUnionAction({
-      personAId: member.id,
-      personBId: member.unionInfo.partnerId,
-      deletePersonId: deletePersonEntirely ? member.id : undefined,
-    });
-
-    setIsDissolvingUnion(false);
-    setConfirmDissolve(false);
-
-    if (res.error) {
-      setError(res.error);
-    } else {
-      router.refresh();
-      if (res.hasSharedChildren) {
-        setUnionType("separated");
-        setUnionSuccessMessage(res.message);
-      } else {
-        setUnionSuccessMessage(res.message || "Vínculo de pareja disuelto.");
-        setTimeout(() => {
-          onClose();
-        }, 700);
-      }
-    }
+    setTimeout(onClose, 600);
   };
 
   const handleDelete = async () => {
-    if (!confirmDelete) {
-      setConfirmDelete(true);
-      return;
-    }
-
     setIsDeleting(true);
     setError(null);
-
     const result = await deleteFamilyMemberAction(member.id);
-
     setIsDeleting(false);
     if (result.error) {
       setError(result.error);
@@ -337,987 +172,515 @@ export function EditMemberModal({
   };
 
   const handleResetClaim = async () => {
-    setIsResettingClaim(true);
     setError(null);
-    setResetSuccessMessage(null);
-
     const res = await resetPersonClaimAction(member.id);
-    setIsResettingClaim(false);
     setConfirmResetClaim(false);
-
-    if (res.error) {
-      setError(res.error);
-    } else {
-      setResetSuccessMessage(res.message || "Ficha liberada exitosamente.");
+    if (res.error) setError(res.error);
+    else {
+      setNotice(res.message || "Ficha liberada.");
       router.refresh();
-      setTimeout(() => {
-        onClose();
-      }, 1500);
     }
   };
 
-  const handleAddParent = () => {
-    if (!selectedNewParentId || parentIds.includes(selectedNewParentId)) return;
-    if (parentIds.length >= 2) {
-      setError("Un familiar suele tener un máximo de 2 progenitores registrados en el árbol.");
-      return;
-    }
-    setParentIds([...parentIds, selectedNewParentId]);
-    setSelectedNewParentId("");
+  // ---------------------------------------------------------------- Familia
+  const [relations, setRelations] = useState<MemberRelations | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [composer, setComposer] = useState<"parent" | "partner" | "child" | null>(null);
+
+  const loadRelations = useCallback(
+    () =>
+      getMemberRelationsAction(member.id).then((res) => {
+        if (res.error) setError(res.error);
+        setRelations(res);
+      }),
+    [member.id]
+  );
+
+  useEffect(() => {
+    if (isOpen && tab === "familia") loadRelations();
+  }, [isOpen, tab, loadRelations]);
+
+  const canEditFamily = Boolean(relations?.canEdit);
+
+  const afterRelationChange = async (message: string) => {
+    setNotice(message);
+    setPendingRemoval(null);
+    await loadRelations();
+    router.refresh();
   };
 
-  const handleRemoveParent = (idToRemove: string) => {
-    setParentIds(parentIds.filter((id) => id !== idToRemove));
+  const removeParent = async (parentId: string) => {
+    setBusyKey(`p:${parentId}`);
+    const res = await unlinkParentChildAction({ parentId, childId: member.id });
+    setBusyKey(null);
+    if (res.error) setError(res.error);
+    else await afterRelationChange("Progenitor quitado.");
   };
 
-  const handleSaveParents = async () => {
-    setIsUpdatingParents(true);
-    setError(null);
-    setParentSuccessMessage(null);
+  const removeChild = async (childId: string) => {
+    setBusyKey(`c:${childId}`);
+    const res = await unlinkParentChildAction({ parentId: member.id, childId });
+    setBusyKey(null);
+    if (res.error) setError(res.error);
+    else await afterRelationChange("Hijo/a desvinculado.");
+  };
 
-    const res = await updatePersonParentsAction({
-      personId: member.id,
-      parentIds,
-      relationshipType,
-    });
+  const changeUnionType = async (partnerId: string, unionType: UnionType) => {
+    setBusyKey(`u:${partnerId}`);
+    const res = await updateUnionStatusAction({ personAId: member.id, personBId: partnerId, unionType });
+    setBusyKey(null);
+    if (res.error) setError(res.error);
+    else await afterRelationChange(`Unión actualizada: ${UNION_LABELS[unionType]}.`);
+  };
 
-    setIsUpdatingParents(false);
-    if (res.error) {
-      setError(res.error);
-    } else {
-      setParentSuccessMessage("Filiación y progenitores actualizados.");
-      router.refresh();
-      setTimeout(() => setParentSuccessMessage(null), 3000);
-    }
+  const removePartner = async (partnerId: string) => {
+    setBusyKey(`u:${partnerId}`);
+    const res = await dissolveUnionAction({ personAId: member.id, personBId: partnerId });
+    setBusyKey(null);
+    if (res.error) setError(res.error);
+    else await afterRelationChange(res.message || "Vínculo de pareja quitado.");
   };
 
   if (!isOpen) return null;
 
+  const fullName = formatFullName(member);
+  const initials = `${member.firstName[0] ?? ""}${member.lastName[0] ?? ""}`.toUpperCase();
+  const firstNameOnly = member.firstName;
+  const otherMembers = availableFamilyMembers.filter((m) => m.id !== member.id);
+
+  const removeButton = (removalKey: string, onConfirm: () => void) =>
+    pendingRemoval === removalKey ? (
+      <span className="flex items-center gap-1.5 shrink-0">
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={busyKey === removalKey}
+          className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-semibold flex items-center gap-1"
+        >
+          {busyKey === removalKey && <Loader2 className="w-3 h-3 animate-spin" />}
+          Quitar
+        </button>
+        <button type="button" onClick={() => setPendingRemoval(null)} className="text-[11px] text-neutral-400 hover:text-white px-1">
+          No
+        </button>
+      </span>
+    ) : (
+      <button
+        type="button"
+        onClick={() => setPendingRemoval(removalKey)}
+        className="text-[11px] text-neutral-500 hover:text-red-300 px-2 py-1 rounded-lg hover:bg-red-950/30 transition shrink-0"
+      >
+        Quitar
+      </button>
+    );
+
+  const Section = ({
+    title,
+    empty,
+    children,
+    addLabel,
+    composerKey,
+    composerProps,
+  }: {
+    title: string;
+    empty: string;
+    children: React.ReactNode[];
+    addLabel: string;
+    composerKey: "parent" | "partner" | "child";
+    composerProps: { fixedPersonAId?: string; fixedPersonBId?: string; relationOptions: LinkRelation[]; personALabel?: string; personBLabel?: string };
+  }) => (
+    <div className="space-y-2">
+      <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wide">{title}</h3>
+      {children.length === 0 ? <p className="text-xs text-neutral-500">{empty}</p> : children}
+      {canEditFamily &&
+        (composer === composerKey ? (
+          <div className="p-3 rounded-2xl border border-neutral-800 bg-neutral-950/50 space-y-2">
+            <LinkComposer
+              members={[...otherMembers, { id: member.id, name: fullName }]}
+              {...composerProps}
+              onLinked={(summary) => {
+                setComposer(null);
+                afterRelationChange(`Guardado: ${summary}.`);
+              }}
+            />
+            <button type="button" onClick={() => setComposer(null)} className="w-full text-[11px] text-neutral-400 hover:text-white py-1">
+              Cancelar
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setComposer(composerKey)}
+            className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 py-1"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            {addLabel}
+          </button>
+        ))}
+    </div>
+  );
+
+
+  const parentRole = (g: Gender) => (g === "female" ? "Madre" : g === "male" ? "Padre" : "Progenitor/a");
+  const childRole = (g: Gender) => (g === "female" ? "Hija" : g === "male" ? "Hijo" : "Hijo/a");
+  const typeNote = (t: string) => (t === "adopted" ? " · por adopción" : t === "foster" ? " · de crianza" : t === "step" ? " · padrastro/madrastra" : "");
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
-        {/* Botón Cerrar */}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200"
+      onKeyDown={(e) => e.key === "Escape" && onClose()}
+    >
+      <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-7 shadow-2xl">
         <button
           onClick={onClose}
-          disabled={isPending || isDeleting || isUpdatingUnion || isDissolvingUnion || isResettingClaim || isUpdatingParents}
+          aria-label="Cerrar"
           className="absolute top-5 right-5 text-neutral-400 hover:text-white p-1.5 rounded-xl hover:bg-neutral-800 transition"
         >
           <X className="w-4 h-4" />
         </button>
 
-        {/* Cabecera */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-            <Pencil className="w-5 h-5" />
+        {/* Encabezado: quién es y qué es de ti */}
+        <div className="flex items-center gap-3 mb-5 pr-8">
+          <div
+            className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 border ${
+              member.gender === "female"
+                ? "bg-pink-950 border-pink-500/40 text-pink-200"
+                : member.gender === "male"
+                ? "bg-blue-950 border-blue-500/40 text-blue-200"
+                : "bg-neutral-800 border-neutral-700 text-neutral-300"
+            }`}
+          >
+            {initials}
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold text-white">Editar Ficha Genealógica</h2>
-              {member.relationshipLabel && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-300 border border-neutral-700">
-                  {member.relationshipLabel}
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-neutral-400">
-              Modifica la información biográfica, histórica y filiación de este nodo familiar.
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-white truncate">{fullName}</h2>
+            <p className="text-xs text-neutral-400 truncate">
+              {member.relationshipLabel}
+              {member.relationshipExplanation && member.relationshipLabel !== "Tú" ? ` · ${member.relationshipExplanation}` : ""}
             </p>
           </div>
         </div>
 
-        {/* Inferencia de Parentesco Inteligente */}
-        {member.relationshipExplanation && (
-          <div className="mb-4 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>
-              Inferencia de parentesco: <strong>{member.relationshipExplanation}</strong>
-            </span>
-          </div>
-        )}
+        {/* Pestañas */}
+        <div className="flex gap-1.5 mb-5 p-1 rounded-xl bg-neutral-950 border border-neutral-800">
+          {(["datos", "familia"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => {
+                setTab(t);
+                setError(null);
+                setNotice(null);
+              }}
+              className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${
+                tab === t ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"
+              }`}
+            >
+              {t === "datos" ? "Datos" : "Familia"}
+            </button>
+          ))}
+        </div>
 
-        {/* Banner de protección para fichas reclamadas por otro usuario */}
-        {isClaimedOther && (
-          <div className="mb-4 p-3.5 rounded-2xl bg-neutral-950/80 border border-neutral-800 flex items-center gap-2.5 text-xs text-neutral-300 animate-in fade-in">
+        {isReadOnly && (
+          <div className="mb-4 p-3 rounded-xl bg-neutral-950/80 border border-neutral-800 flex items-center gap-2 text-xs text-neutral-300">
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Esta ficha personal está activa y verificada. Sus datos personales solo pueden ser modificados por su propio titular.</span>
+            <span>{firstNameOnly} ya tiene cuenta propia; solo esa persona puede cambiar su información.</span>
           </div>
         )}
 
-        {/* SECCIÓN ESPECIAL: CUENTA, CORREO REGISTRADO Y RESET (UNCLAIM) */}
-        {isUserZero && (member.accountEmail || member.isClaimed) && !isSelf && (
-          <div className="mb-4 p-4 rounded-2xl bg-neutral-950/70 border border-neutral-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Mail className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs font-semibold text-neutral-200">
-                  Cuenta y Correo Registrado
-                </span>
-              </div>
-              {member.isClaimed ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  <ShieldCheck className="w-3 h-3" /> Ficha Reclamada
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-800 text-neutral-400 border border-neutral-700">
-                  Pendiente
-                </span>
-              )}
-            </div>
-
-            {member.accountEmail && (
-              <div className="px-3.5 py-2.5 rounded-xl bg-neutral-900 border border-neutral-800 text-xs text-neutral-200 font-mono flex items-center justify-between">
-                <span>{member.accountEmail}</span>
-                <span className="text-[10px] text-neutral-400 font-sans">Correo utilizado</span>
-              </div>
-            )}
-
-            {/* Opción de Administrador: Liberar / Resetear Ficha */}
-            {member.isClaimed && (
-              <div className="pt-2 border-t border-neutral-800/80">
-                {confirmResetClaim ? (
-                  <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 space-y-2">
-                    <p className="text-xs text-amber-200 leading-relaxed">
-                      ¿Deseas liberar esta ficha? Se desvinculará el correo actual ({member.accountEmail ?? "cuenta vinculada"}). Sus datos genealógicos se mantendrán intactos, pero la persona podrá crear o vincular su cuenta con su correo correcto.
-                    </p>
-                    <div className="flex items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        disabled={isResettingClaim}
-                        onClick={handleResetClaim}
-                        className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
-                      >
-                        {isResettingClaim ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <RotateCcw className="w-3.5 h-3.5" />
-                        )}
-                        <span>Confirmar Liberación</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isResettingClaim}
-                        onClick={() => setConfirmResetClaim(false)}
-                        className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmResetClaim(true)}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 text-xs font-medium transition"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Liberar ficha para nuevo registro / Resetear correo</span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* SECCIÓN ESPECIAL: GESTIÓN DE PROGENITORES (PADRES / FILIACIÓN) */}
-        <div className="mb-6 p-4 rounded-2xl bg-neutral-950/70 border border-teal-900/40 space-y-3">
-          <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-teal-300">
-              <GitFork className="w-4 h-4 text-teal-400" />
-              <span>Progenitores / Filiación (Padres)</span>
-            </div>
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-teal-950/60 border border-teal-800/50 text-teal-300">
-              {parentIds.length}/2 registrados
-            </span>
-          </div>
-
-          {/* Asistente Rápido: Vincular como Hermano/a compartiendo progenitores (Solo para miembros sin pareja ni padres registrados) */}
-          {!isClaimedOther && !isSelf && viewerParents && viewerParents.length > 0 && (
-            <div>
-              {viewerParents.every((vp) => parentIds.includes(vp.id)) && parentIds.length > 0 && !member.unionInfo ? (
-                <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-800/50 flex items-center gap-2.5 text-xs text-emerald-200">
-                  <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <div>
-                    <span className="font-semibold text-emerald-300">Vinculado/a como hermano/a: </span>
-                    <span className="text-emerald-400/80">Comparte a tus progenitores ({viewerParents.map((p) => p.name).join(" y ")}).</span>
-                  </div>
-                </div>
-              ) : (
-                !member.unionInfo &&
-                member.relationshipCategory !== "spouse" &&
-                member.relationshipCategory !== "parent" &&
-                member.relationshipCategory !== "child" &&
-                parentIds.length === 0 &&
-                viewerParents.length <= 2 && (
-                  <div className="p-3.5 rounded-2xl bg-teal-950/40 border border-teal-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
-                    <div className="flex items-center gap-2.5">
-                      <Sparkles className="w-4 h-4 text-teal-400 shrink-0" />
-                      <div>
-                        <p className="text-xs font-semibold text-teal-200">
-                          ¿Es tu hermano o hermana?
-                        </p>
-                        <p className="text-[11px] text-teal-300/80">
-                          Asignar a tus mismos padres ({viewerParents.map((p) => p.name).join(" y ")}) para que el árbol lo reconozca como Hermano/a.
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={isUpdatingParents}
-                      onClick={handleAssignViewerParents}
-                      className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shrink-0 transition shadow-sm flex items-center justify-center gap-1.5"
-                    >
-                      {isUpdatingParents ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitFork className="w-3.5 h-3.5" />}
-                      <span>Vincular como Hermano/a</span>
-                    </button>
-                  </div>
-                )
-              )}
-            </div>
-          )}
-
-          {/* Lista de Progenitores Actuales */}
-          <div className="space-y-2">
-            {parentIds.length === 0 ? (
-              <p className="text-xs text-neutral-500 italic">No tiene progenitores asignados en el árbol.</p>
-            ) : (
-              parentIds.map((pId) => {
-                const parentObj = availableFamilyMembers?.find((m) => m.id === pId) ||
-                                  member.parentConnections?.find((c) => c.parentId === pId);
-                const pName = parentObj
-                  ? "name" in parentObj
-                    ? parentObj.name
-                    : parentObj.parentName
-                  : "Familiar registrado";
-                return (
-                  <div
-                    key={pId}
-                    className="flex items-center justify-between px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 text-xs"
-                  >
-                    <span className="text-white font-medium">{pName}</span>
-                    {!isClaimedOther && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveParent(pId)}
-                        className="text-red-400 hover:text-red-300 p-1 hover:bg-red-950/30 rounded-lg transition"
-                        title="Quitar como progenitor"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Selector para añadir progenitor */}
-          {!isClaimedOther && parentIds.length < 2 && availableFamilyMembers && (
-            <div className="flex items-center gap-2 pt-1">
-              <select
-                value={selectedNewParentId}
-                onChange={(e) => setSelectedNewParentId(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-200 text-xs focus:outline-none focus:border-teal-500"
-              >
-                <option value="">-- Seleccionar familiar como padre/madre --</option>
-                {availableFamilyMembers
-                  .filter((m) => m.id !== member.id && !parentIds.includes(m.id))
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-              </select>
-              <button
-                type="button"
-                disabled={!selectedNewParentId}
-                onClick={handleAddParent}
-                className="px-3 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-medium transition disabled:opacity-40 flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Añadir</span>
-              </button>
-            </div>
-          )}
-
-          {/* Tipo de relación y guardar */}
-          {!isClaimedOther && (
-            <div className="flex items-center justify-between pt-2 border-t border-neutral-800/80">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-neutral-400">Tipo de filiación:</span>
-                <select
-                  value={relationshipType}
-                  onChange={(e) =>
-                    setRelationshipType(e.target.value as "biological" | "adopted" | "foster" | "step")
-                  }
-                  className="px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-300 text-[11px]"
-                >
-                  <option value="biological">Biológica</option>
-                  <option value="adopted">Adoptiva</option>
-                  <option value="step">Padrastro / Madrastra</option>
-                  <option value="foster">Crianza / Acogida</option>
-                </select>
-              </div>
-
-              <button
-                type="button"
-                disabled={isUpdatingParents}
-                onClick={handleSaveParents}
-                className="px-3 py-1.5 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
-              >
-                {isUpdatingParents && <Loader2 className="w-3 h-3 animate-spin" />}
-                <span>Guardar Filiación</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* ASISTENTE GENEALÓGICO: REASIGNACIÓN DE ROL (DE PROGENITOR A HERMANO/A) */}
-        {!isClaimedOther && (children.length > 0 || member.relationshipCategory === "parent") && (
-          <div className="mb-6 p-4 rounded-2xl bg-amber-950/30 border border-amber-800/50 space-y-2.5">
-            <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
-              <RotateCcw className="w-4 h-4 text-amber-400" />
-              <span>Corrección Genealógica: ¿Es hermano/a en lugar de padre/madre?</span>
-            </div>
-            <p className="text-xs text-amber-200/80 leading-relaxed">
-              Si esta persona fue registrada por error como progenitor/a pero en realidad es hermano/a de la familia, puedes reasignar su rol. Se desvinculará como padre de sus supuestos hijos y se asignará como hermano/a compartiendo los progenitores de la rama familiar.
-            </p>
-            {children.length > 0 && (
-              <div className="pt-1">
-                <button
-                  type="button"
-                  disabled={isConvertingRole}
-                  onClick={() => handleConvertToSibling(children[0].childId)}
-                  className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-                >
-                  {isConvertingRole ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <GitFork className="w-3.5 h-3.5" />
-                  )}
-                  <span>Convertir en Hermano/a de {children[0].childName}</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* SECCIÓN: DESCENDENCIA / HIJOS REGISTRADOS */}
-        <div className="mb-6 p-4 rounded-2xl bg-neutral-950/70 border border-neutral-800/80 space-y-3">
-          <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-neutral-200">
-              <Users className="w-4 h-4 text-emerald-400" />
-              <span>Descendencia (Hijos Registrados)</span>
-            </div>
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-neutral-400">
-              {children.length} {children.length === 1 ? "hijo/a" : "hijos/as"}
-            </span>
-          </div>
-
-          {children.length === 0 ? (
-            <p className="text-xs text-neutral-500 italic">No tiene hijos registrados bajo esta ficha.</p>
-          ) : (
-            <div className="space-y-2">
-              {children.map((c) => (
-                <div
-                  key={c.childId}
-                  className="flex items-center justify-between px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 text-xs"
-                >
-                  <div>
-                    <span className="text-white font-medium block">{c.childName}</span>
-                    <span className="text-[10px] text-neutral-400">Filiación {c.relationshipType}</span>
-                  </div>
-                  {!isClaimedOther && (
-                    <button
-                      type="button"
-                      disabled={isUnlinkingChildId === c.childId}
-                      onClick={() => handleUnlinkChild(c.childId)}
-                      className="text-red-400 hover:text-red-300 px-2 py-1 hover:bg-red-950/40 rounded-lg transition text-xs flex items-center gap-1 border border-red-900/40 disabled:opacity-50"
-                      title="Desvincular como hijo/a"
-                    >
-                      {isUnlinkingChildId === c.childId ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <X className="w-3.5 h-3.5" />
-                      )}
-                      <span>Desvincular</span>
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Mensaje de Éxito de Reasignación de Rol */}
-        {convertSuccessMessage && (
-          <div className="mb-4 p-3 rounded-2xl bg-amber-950/50 border border-amber-500/50 text-amber-200 text-xs flex items-center gap-2 animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>{convertSuccessMessage}</span>
-          </div>
-        )}
-
-        {/* Mensaje de Éxito de Descendencia */}
-        {childSuccessMessage && (
-          <div className="mb-4 p-3 rounded-2xl bg-teal-950/50 border border-teal-500/50 text-teal-200 text-xs flex items-center gap-2 animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" />
-            <span>{childSuccessMessage}</span>
-          </div>
-        )}
-
-        {/* Alerta de Error */}
         {error && (
-          <div className="mb-4 p-3 rounded-2xl bg-red-950/40 border border-red-800/60 text-red-200 text-xs flex items-start gap-2">
+          <div className="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-800/60 text-red-200 text-xs flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
         )}
-
-        {/* Mensaje de Éxito de Reset de Ficha */}
-        {resetSuccessMessage && (
-          <div className="mb-4 p-3 rounded-2xl bg-amber-950/50 border border-amber-500/50 text-amber-200 text-xs flex items-center gap-2 animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>{resetSuccessMessage}</span>
+        {notice && (
+          <div className="mb-4 p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-emerald-200 text-xs flex items-start gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <span>{notice}</span>
           </div>
         )}
 
-        {/* Mensaje de Éxito de Progenitores */}
-        {parentSuccessMessage && (
-          <div className="mb-4 p-3 rounded-2xl bg-teal-950/50 border border-teal-500/50 text-teal-200 text-xs flex items-center gap-2 animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" />
-            <span>{parentSuccessMessage}</span>
-          </div>
-        )}
-
-        {/* Mensaje de Éxito de Datos Personales */}
-        {success && (
-          <div className="mb-4 p-3 rounded-2xl bg-emerald-950/50 border border-emerald-500/50 text-emerald-200 text-xs flex items-center gap-2 animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Cambios guardados exitosamente. Actualizando...</span>
-          </div>
-        )}
-
-        {/* Mensaje de Éxito de Unión */}
-        {unionSuccessMessage && (
-          <div className="mb-4 p-3 rounded-2xl bg-teal-950/50 border border-teal-500/50 text-teal-200 text-xs flex items-center gap-2 animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0" />
-            <span>{unionSuccessMessage}</span>
-          </div>
-        )}
-
-        {/* SECCIÓN ESPECIAL: GESTIÓN DE VÍNCULO CONYUGAL (SI TIENE UNIÓN) */}
-        {member.unionInfo && (() => {
-          const partnerName =
-            availableFamilyMembers?.find((m) => m.id === member.unionInfo?.partnerId)?.name ||
-            "Pareja Registrada";
-
-          const getUnionLabel = (uType: string) => {
-            switch (uType) {
-              case "married":
-                return "Casados";
-              case "partner":
-                return "Pareja (Unión Libre)";
-              case "separated":
-                return "Separados";
-              case "divorced":
-                return "Divorciados";
-              default:
-                return uType;
-            }
-          };
-
-          return (
-            <div className="mb-6 p-4 rounded-2xl bg-neutral-950/80 border border-pink-900/40 space-y-3.5">
-              <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-pink-300">
-                  <Heart className="w-4 h-4 text-pink-400" />
-                  <span>Gestión de Vínculo de Pareja</span>
+        {tab === "datos" ? (
+          <form onSubmit={handleSave} className="space-y-4">
+            <fieldset disabled={isReadOnly} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelClass}>
+                    Nombre <span className="text-emerald-400">*</span>
+                  </label>
+                  <input required value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inputClass} />
                 </div>
-                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-pink-950/60 border border-pink-800/50 text-pink-300">
-                  {member.unionInfo.unionType}
-                </span>
+                <div>
+                  <label className={labelClass}>Segundo nombre</label>
+                  <input value={middleName} onChange={(e) => setMiddleName(e.target.value)} placeholder="Opcional" className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>
+                    Apellido paterno <span className="text-emerald-400">*</span>
+                  </label>
+                  <input required value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>Apellido materno</label>
+                  <input
+                    value={maternalLastName}
+                    onChange={(e) => setMaternalLastName(e.target.value)}
+                    placeholder="Opcional"
+                    className={inputClass}
+                  />
+                </div>
               </div>
 
-              {/* Ficha destacada con el nombre de la pareja */}
-              <div className="p-3 rounded-2xl bg-neutral-900/90 border border-neutral-800 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-pink-500/10 border border-pink-500/20 text-pink-400 flex items-center justify-center shrink-0">
-                    <Heart className="w-4 h-4 fill-pink-500/20" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] text-neutral-400 block">Vínculo conyugal registrado con:</span>
-                    <span className="text-xs font-bold text-white">{partnerName}</span>
-                  </div>
-                </div>
-                <span className="text-[11px] font-medium px-2.5 py-1 rounded-lg bg-pink-950/80 border border-pink-800/60 text-pink-300">
-                  {getUnionLabel(member.unionInfo.unionType)}
-                </span>
-              </div>
-
-              {/* Selector de estado de relación y confirmación de cambios */}
-              <div className="space-y-2.5 pt-1">
-                <label className="block text-[11px] font-medium text-neutral-300">
-                  Estado de la Relación
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
-                  <select
-                    value={unionType}
-                    onChange={(e) => {
-                      setUnionType(e.target.value as "married" | "civil_union" | "divorced" | "separated" | "partner");
-                      setConfirmUpdateUnion(false);
-                    }}
-                    className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-700 text-white text-xs focus:outline-none focus:border-pink-500 transition"
-                  >
-                    <option value="married">Casados</option>
-                    <option value="partner">Pareja / Unión Libre</option>
-                    <option value="separated">Separados</option>
-                    <option value="divorced">Divorciados</option>
-                  </select>
-
-                  {!confirmUpdateUnion && (
-                    <button
-                      type="button"
-                      disabled={isUpdatingUnion || unionType === member.unionInfo.unionType}
-                      onClick={() => setConfirmUpdateUnion(true)}
-                      className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold transition disabled:opacity-40 flex items-center justify-center gap-1.5"
-                    >
-                      <span>Cambiar Estado</span>
-                    </button>
-                  )}
-                </div>
-
-                {/* Diálogo de Confirmación antes de actualizar el estado conyugal */}
-                {confirmUpdateUnion && unionType !== member.unionInfo.unionType && (
-                  <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 space-y-2 animate-in fade-in">
-                    <p className="text-xs text-amber-200">
-                      ¿Confirmas que deseas cambiar la relación con <strong className="text-white">{partnerName}</strong> de{" "}
-                      <span className="underline">{getUnionLabel(member.unionInfo.unionType)}</span> a{" "}
-                      <strong className="text-emerald-400">{getUnionLabel(unionType)}</strong>?
-                    </p>
-                    <div className="flex items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        disabled={isUpdatingUnion}
-                        onClick={handleUpdateUnionStatus}
-                        className="px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
-                      >
-                        {isUpdatingUnion && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                        <span>Confirmar Cambio</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isUpdatingUnion}
-                        onClick={() => {
-                          setUnionType(member.unionInfo!.unionType);
-                          setConfirmUpdateUnion(false);
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs transition"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Disolver / Desvincular Pareja */}
-              <div className="pt-2 border-t border-neutral-900 flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-neutral-400">
-                  ¿Ya no son pareja?
-                </span>
-
-                {!confirmDissolve && (
+              <div>
+                <span className={labelClass}>Sexo</span>
+                <div className="flex gap-1.5">
+                  <button type="button" onClick={() => setGender("male")} className={segmentClass(gender === "male")}>
+                    Hombre
+                  </button>
+                  <button type="button" onClick={() => setGender("female")} className={segmentClass(gender === "female")}>
+                    Mujer
+                  </button>
                   <button
                     type="button"
-                    onClick={() => setConfirmDissolve(true)}
-                    className="text-xs text-red-400 hover:text-red-300 hover:underline flex items-center gap-1 font-medium"
+                    onClick={() => setGender(gender === "other" ? "other" : "unknown")}
+                    className={segmentClass(gender === "unknown" || gender === "other")}
                   >
-                    <HeartCrack className="w-3.5 h-3.5" />
-                    <span>Disolver vínculo de pareja</span>
+                    {gender === "other" ? "Otro" : "No sé"}
                   </button>
-                )}
+                </div>
               </div>
 
-              {confirmDissolve && (
-                <div className="p-3 rounded-xl bg-red-950/40 border border-red-800/60 space-y-2.5 animate-in fade-in">
-                  <p className="text-xs text-red-200 font-medium">
-                    ¿Cómo deseas gestionar esta separación en tu árbol genealógico?
-                  </p>
-                  <p className="text-[11px] text-neutral-400">
-                    Si no tienen hijos en común, dejará de aparecer en tu mapa visual para mantener tu árbol cómodo y privado.
-                  </p>
-
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      disabled={isDissolvingUnion}
-                      onClick={() => handleDissolveUnion(false)}
-                      className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow-sm"
-                    >
-                      {isDissolvingUnion ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <HeartCrack className="w-3 h-3" />
-                      )}
-                      <span>Quitar de mi árbol</span>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelClass}>Fecha de nacimiento</label>
+                  <input type="date" max={today()} value={birthDate} onChange={(e) => setBirthDate(e.target.value)} className={inputClass} />
+                </div>
+                <div>
+                  <span className={labelClass}>¿Vive?</span>
+                  <div className="flex gap-1.5">
+                    <button type="button" onClick={() => setIsLiving(true)} className={segmentClass(isLiving)}>
+                      Sí
                     </button>
-
-                    {!member.isClaimed && (
-                      <button
-                        type="button"
-                        disabled={isDissolvingUnion}
-                        onClick={() => handleDissolveUnion(true)}
-                        className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-red-300 text-xs font-medium rounded-lg border border-red-800/40 transition"
-                      >
-                        Eliminar ficha completa
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDissolve(false)}
-                      className="px-2.5 py-1.5 text-xs text-neutral-400 hover:text-white"
-                    >
-                      Cancelar
+                    <button type="button" onClick={() => setIsLiving(false)} className={segmentClass(!isLiving)}>
+                      No
                     </button>
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
+                {!isLiving && (
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className={labelClass}>Fecha de fallecimiento</label>
+                    <input
+                      type="date"
+                      min={birthDate || undefined}
+                      max={today()}
+                      value={deathDate}
+                      onChange={(e) => setDeathDate(e.target.value)}
+                      className={inputClass}
+                    />
+                  </div>
+                )}
+              </div>
+              {dateProblem && <p className="text-xs text-amber-300 -mt-2">{dateProblem}</p>}
 
-        {isClaimedOther ? (
-          <div className="p-4 rounded-2xl bg-neutral-950/70 border border-neutral-800 space-y-3">
-            <h3 className="text-xs font-semibold text-neutral-300 uppercase tracking-wider font-mono">
-              Ficha Biográfica Registrada
-            </h3>
-            <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
-                <span className="text-neutral-500 block">Nombre Completo:</span>
-                <span className="text-white font-medium">
-                  {[member.firstName, member.middleName, member.lastName, member.maternalLastName]
-                    .filter(Boolean)
-                    .join(" ")}
-                </span>
-              </div>
-              <div>
-                <span className="text-neutral-500 block">Género:</span>
-                <span className="text-white font-medium">
-                  {member.gender === "male"
-                    ? "Masculino"
-                    : member.gender === "female"
-                    ? "Femenino"
-                    : "Otro"}
-                </span>
-              </div>
-              <div>
-                <span className="text-neutral-500 block">Estado:</span>
-                <span className="text-white font-medium">
-                  {member.isLiving ? "Con vida" : "Fallecido/a"}
-                </span>
-              </div>
-              {member.birthDate && (
-                <div>
-                  <span className="text-neutral-500 block">Fecha de Nacimiento:</span>
-                  <span className="text-white font-medium">{member.birthDate}</span>
-                </div>
-              )}
-            </div>
-            {member.bio && (
-              <div className="pt-2 border-t border-neutral-800/80 text-xs">
-                <span className="text-neutral-500 block">Biografía / Recuerdos:</span>
-                <p className="text-neutral-300 mt-1 italic">{member.bio}</p>
-              </div>
-            )}
-            <div className="pt-3 border-t border-neutral-800 flex justify-end">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-medium transition"
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        ) : (
-          /* Formulario de Datos Personales */
-          <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Nombres y Apellidos Separados */}
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                  Primer Nombre <span className="text-emerald-400">*</span>
-                </label>
+                <label className={labelClass}>Lugar de nacimiento</label>
                 <input
-                  type="text"
-                  required
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  placeholder="Ej. Jorge"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                  Segundo Nombre <span className="text-neutral-500">(Opcional)</span>
-                </label>
-                <input
-                  type="text"
-                  value={middleName}
-                  onChange={(e) => setMiddleName(e.target.value)}
-                  placeholder="Ej. Luis"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                  Apellido Paterno <span className="text-emerald-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  placeholder="Ej. Hernández"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                  Apellido Materno <span className="text-neutral-500">(Opcional)</span>
-                </label>
-                <input
-                  type="text"
-                  value={maternalLastName}
-                  onChange={(e) => setMaternalLastName(e.target.value)}
-                  placeholder="Ej. García"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Apellido Materno / De Soltera y Género */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                Apellido de Soltera / Secundario
-              </label>
-              <input
-                type="text"
-                value={maidenName}
-                onChange={(e) => setMaidenName(e.target.value)}
-                placeholder="Opcional"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-neutral-300 mb-1.5">
-                Género
-              </label>
-              <select
-                value={gender}
-                onChange={(e) => setGender(e.target.value as Gender)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-              >
-                <option value="male">Masculino (♂ Azul)</option>
-                <option value="female">Femenino (♀ Rosa)</option>
-                <option value="other">Otro</option>
-                <option value="unknown">Desconocido</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Estado de Vida (Switch) */}
-          <div className="p-3.5 rounded-2xl bg-neutral-950/60 border border-neutral-800 flex items-center justify-between">
-            <div>
-              <span className="text-xs font-medium text-white block">
-                ¿La persona está con vida?
-              </span>
-              <span className="text-[11px] text-neutral-500">
-                {isLiving
-                  ? "Se considera familiar activo"
-                  : "Se registrará como ancestro o familiar fallecido"}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 bg-neutral-900 p-1 rounded-xl border border-neutral-800">
-              <button
-                type="button"
-                onClick={() => setIsLiving(true)}
-                className={`px-3 py-1 text-xs font-semibold rounded-lg transition ${
-                  isLiving
-                    ? "bg-emerald-600 text-white shadow-sm"
-                    : "text-neutral-400 hover:text-white"
-                }`}
-              >
-                Viva
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsLiving(false)}
-                className={`px-3 py-1 text-xs font-semibold rounded-lg transition ${
-                  !isLiving
-                    ? "bg-neutral-700 text-white shadow-sm"
-                    : "text-neutral-400 hover:text-white"
-                }`}
-              >
-                Fallecida
-              </button>
-            </div>
-          </div>
-
-          {/* Fechas: Nacimiento y Defunción */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-neutral-300 mb-1.5 flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-neutral-400" />
-                <span>Fecha de Nacimiento</span>
-              </label>
-              <input
-                type="date"
-                value={birthDate}
-                onChange={(e) => setBirthDate(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-              />
-            </div>
-
-            {!isLiving ? (
-              <div className="animate-in fade-in">
-                <label className="block text-xs font-medium text-neutral-300 mb-1.5 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-neutral-400" />
-                  <span>Fecha de Defunción</span>
-                </label>
-                <input
-                  type="date"
-                  value={deathDate}
-                  onChange={(e) => setDeathDate(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-                />
-              </div>
-            ) : (
-              <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1.5 flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-neutral-400" />
-                  <span>Lugar de Nacimiento</span>
-                </label>
-                <input
-                  type="text"
                   value={birthPlace}
                   onChange={(e) => setBirthPlace(e.target.value)}
                   placeholder="Ej. Monterrey, N.L."
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+                  className={inputClass}
                 />
               </div>
-            )}
-          </div>
 
-          {!isLiving && (
-            <div>
-              <label className="block text-xs font-medium text-neutral-300 mb-1.5 flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-neutral-400" />
-                <span>Lugar de Nacimiento</span>
-              </label>
-              <input
-                type="text"
-                value={birthPlace}
-                onChange={(e) => setBirthPlace(e.target.value)}
-                placeholder="Ej. Monterrey, N.L."
-                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
-              />
-            </div>
-          )}
-
-          {/* Biografía / Notas */}
-          <div>
-            <label className="block text-xs font-medium text-neutral-300 mb-1.5 flex items-center gap-1.5">
-              <FileText className="w-3.5 h-3.5 text-neutral-400" />
-              <span>Biografía o Recuerdos Familiares</span>
-            </label>
-            <textarea
-              rows={3}
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              placeholder="Escribe anécdotas, profesión, o información relevante de su vida..."
-              className="w-full px-3.5 py-2 rounded-xl bg-neutral-950 border border-neutral-800 text-white placeholder-neutral-600 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition resize-none"
-            />
-          </div>
-
-          {/* Botones de Acción */}
-          <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-3">
-            {/* Opción de Eliminar (Solo si no ha sido reclamada) */}
-            {!member.isClaimed ? (
               <div>
-                {confirmDelete ? (
-                  <div className="flex items-center gap-2">
+                <label className={labelClass}>Notas</label>
+                <textarea
+                  rows={3}
+                  value={bio}
+                  onChange={(e) => setBio(e.target.value)}
+                  placeholder="Apodo, profesión, anécdotas…"
+                  className={`${inputClass} resize-none`}
+                />
+              </div>
+
+              {showMore ? (
+                <div>
+                  <label className={labelClass}>Otro apellido con el que se le conoce</label>
+                  <input
+                    value={maidenName}
+                    onChange={(e) => setMaidenName(e.target.value)}
+                    placeholder="Ej. apellido de casada"
+                    className={inputClass}
+                  />
+                </div>
+              ) : (
+                !isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setShowMore(true)}
+                    className="flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-300"
+                  >
+                    <ChevronDown className="w-3 h-3" /> ¿Se le conoce con otro apellido?
+                  </button>
+                )
+              )}
+            </fieldset>
+
+            {!isReadOnly && (
+              <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-3">
+                {!member.isClaimed && !isSelf ? (
+                  confirmDelete ? (
+                    <span className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={isDeleting}
+                        onClick={handleDelete}
+                        className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5"
+                      >
+                        {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                        Sí, eliminar
+                      </button>
+                      <button type="button" onClick={() => setConfirmDelete(false)} className="text-xs text-neutral-400 hover:text-white">
+                        No
+                      </button>
+                    </span>
+                  ) : (
                     <button
                       type="button"
-                      disabled={isDeleting}
-                      onClick={handleDelete}
-                      className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5"
+                      onClick={() => setConfirmDelete(true)}
+                      className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-red-300 px-2 py-2 rounded-xl transition"
                     >
-                      {isDeleting ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-3.5 h-3.5" />
-                      )}
-                      <span>¿Confirmar borrado?</span>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Eliminar
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDelete(false)}
-                      className="text-xs text-neutral-400 hover:text-white px-2 py-1"
-                    >
-                      Cancelar
+                  )
+                ) : (
+                  <span />
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isSaving || Boolean(dateProblem)}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition disabled:opacity-50"
+                >
+                  {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : saved ? <CheckCircle2 className="w-3.5 h-3.5" /> : null}
+                  {saved ? "Guardado" : "Guardar"}
+                </button>
+              </div>
+            )}
+
+            {/* Solo Usuario Cero: cuenta vinculada */}
+            {isUserZero && member.isClaimed && !isSelf && (
+              <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-2 text-[11px] text-neutral-400">
+                <span className="truncate">Cuenta: {member.accountEmail ?? "vinculada"}</span>
+                {confirmResetClaim ? (
+                  <span className="flex items-center gap-2 shrink-0">
+                    <button type="button" onClick={handleResetClaim} className="text-amber-300 hover:text-amber-200 font-semibold">
+                      Confirmar liberación
                     </button>
-                  </div>
+                    <button type="button" onClick={() => setConfirmResetClaim(false)} className="hover:text-white">
+                      No
+                    </button>
+                  </span>
                 ) : (
                   <button
                     type="button"
-                    onClick={() => setConfirmDelete(true)}
-                    className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/40 px-3 py-2 rounded-xl border border-red-900/40 transition"
+                    onClick={() => setConfirmResetClaim(true)}
+                    className="flex items-center gap-1 text-amber-300/80 hover:text-amber-200 shrink-0"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Eliminar ficha</span>
+                    <RotateCcw className="w-3 h-3" /> Liberar ficha
                   </button>
                 )}
               </div>
-            ) : (
-              <div />
             )}
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={isPending || isDeleting}
-                className="px-4 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-medium transition"
-              >
-                Cancelar
-              </button>
-
-              <button
-                type="submit"
-                disabled={isPending || isDeleting}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-700/20 transition disabled:opacity-50"
-              >
-                {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                <span>Guardar Cambios</span>
-              </button>
-            </div>
+          </form>
+        ) : relations === null ? (
+          <div className="flex items-center gap-2 text-xs text-neutral-500 py-6 justify-center">
+            <Loader2 className="w-4 h-4 animate-spin" /> Cargando familia…
           </div>
-        </form>
-      )}
+        ) : (
+          <div className="space-y-6">
+            {Section({
+              title: "Padres",
+              empty: "Sin padres registrados.",
+              addLabel: "Vincular padre o madre ya registrado",
+              composerKey: "parent",
+              composerProps: { fixedPersonBId: member.id, relationOptions: ["parent"], personALabel: "¿Quién es su padre o madre?" },
+              children: relations.parents.map((p) => (
+                <Row
+                  key={p.id}
+                  name={p.name}
+                  detail={`${parentRole(p.gender)}${typeNote(p.relationshipType)}`}
+                  action={canEditFamily && removeButton(`p:${p.id}`, () => removeParent(p.id))}
+                />
+              )),
+            })}
+
+            {Section({
+              title: "Parejas",
+              empty: "Sin parejas registradas.",
+              addLabel: "Vincular pareja ya registrada",
+              composerKey: "partner",
+              composerProps: {
+                fixedPersonAId: member.id,
+                relationOptions: ["married", "partner", "divorced", "separated"],
+                personBLabel: "¿Con quién?",
+              },
+              children: relations.partners.map((p) => (
+                <Row
+                  key={p.id}
+                  name={p.name}
+                  action={
+                    canEditFamily ? (
+                      <span className="flex items-center gap-1 shrink-0">
+                        <select
+                          value={p.unionType}
+                          disabled={busyKey === `u:${p.id}`}
+                          onChange={(e) => changeUnionType(p.id, e.target.value as UnionType)}
+                          className="bg-neutral-900 border border-neutral-800 rounded-lg py-1 px-1.5 text-[11px] text-neutral-200"
+                        >
+                          {(["married", "partner", "separated", "divorced"] as UnionType[]).map((t) => (
+                            <option key={t} value={t}>
+                              {UNION_LABELS[t]}
+                            </option>
+                          ))}
+                          {p.unionType === "civil_union" && <option value="civil_union">{UNION_LABELS.civil_union}</option>}
+                        </select>
+                        {removeButton(`u:${p.id}`, () => removePartner(p.id))}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-neutral-400">{UNION_LABELS[p.unionType]}</span>
+                    )
+                  }
+                />
+              )),
+            })}
+
+            {Section({
+              title: "Hijos",
+              empty: "Sin hijos registrados.",
+              addLabel: "Vincular hijo o hija ya registrado",
+              composerKey: "child",
+              composerProps: { fixedPersonAId: member.id, relationOptions: ["parent"], personBLabel: "¿Quién es su hijo o hija?" },
+              children: relations.children.map((c) => (
+                <Row
+                  key={c.id}
+                  name={c.name}
+                  detail={`${childRole(c.gender)}${typeNote(c.relationshipType)}`}
+                  action={canEditFamily && removeButton(`c:${c.id}`, () => removeChild(c.id))}
+                />
+              )),
+            })}
+
+            <p className="text-[11px] text-neutral-500 border-t border-neutral-800 pt-3">
+              Quitar un vínculo no borra a ninguna persona. Para registrar a alguien nuevo usa el botón{" "}
+              <strong className="text-neutral-300">+</strong> de su tarjeta en el árbol.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
 }

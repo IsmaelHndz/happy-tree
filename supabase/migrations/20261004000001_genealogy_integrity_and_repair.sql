@@ -7,11 +7,11 @@
 -- (Marca como 'rejected' cualquier unión entre ancestro-descendiente o hermanos biológicos)
 with recursive closure(ancestor_id, descendant_id) as (
   select parent_id, child_id from public.parent_child_edges
-  where status <> 'rejected' and relationship_type in ('biological', 'adoptive')
+  where status <> 'rejected' and relationship_type in ('biological', 'adopted')
   union
   select c.ancestor_id, e.child_id
   from closure c join public.parent_child_edges e on e.parent_id = c.descendant_id
-  where e.status <> 'rejected' and e.relationship_type in ('biological', 'adoptive')
+  where e.status <> 'rejected' and e.relationship_type in ('biological', 'adopted')
 ),
 bad as (
   select u.id,
@@ -25,8 +25,8 @@ bad as (
                    join public.parent_child_edges b on a.parent_id = b.parent_id
                    where a.child_id = u.person_a_id and b.child_id = u.person_b_id
                      and a.status <> 'rejected' and b.status <> 'rejected'
-                     and a.relationship_type in ('biological', 'adoptive')
-                     and b.relationship_type in ('biological', 'adoptive'))
+                     and a.relationship_type in ('biological', 'adopted')
+                     and b.relationship_type in ('biological', 'adopted'))
         then 'siblings'
     end as reason
   from public.union_edges u
@@ -54,10 +54,10 @@ begin
     with recursive anc(id) as (
       select e.parent_id from public.parent_child_edges e
       where e.child_id in (new.person_a_id, new.person_b_id)
-        and e.status <> 'rejected' and e.relationship_type in ('biological', 'adoptive')
+        and e.status <> 'rejected' and e.relationship_type in ('biological', 'adopted')
       union
       select e.parent_id from public.parent_child_edges e join anc on e.child_id = anc.id
-      where e.status <> 'rejected' and e.relationship_type in ('biological', 'adoptive')
+      where e.status <> 'rejected' and e.relationship_type in ('biological', 'adopted')
     ) select 1 from anc where id in (new.person_a_id, new.person_b_id)
   ) then
     raise exception 'UNION_ANCESTOR_DESCENDANT: Contradicción biológica. Existe un vínculo de ancestro o progenitor entre ambas personas.';
@@ -70,8 +70,8 @@ begin
     join public.parent_child_edges b on a.parent_id = b.parent_id
     where a.child_id = new.person_a_id and b.child_id = new.person_b_id
       and a.status <> 'rejected' and b.status <> 'rejected'
-      and a.relationship_type in ('biological', 'adoptive')
-      and b.relationship_type in ('biological', 'adoptive')
+      and a.relationship_type in ('biological', 'adopted')
+      and b.relationship_type in ('biological', 'adopted')
   ) then
     raise exception 'UNION_SIBLINGS: Contradicción biológica. Ambas personas comparten progenitores registrados.';
   end if;

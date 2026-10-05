@@ -491,7 +491,7 @@ export function AddMemberModal({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className={labelClass}>Fecha de nacimiento</label>
-                    <input name="birth_date" type="date" className={inputClass} />
+                    <input name="birth_date" type="date" max={new Date().toISOString().slice(0, 10)} className={inputClass} />
                   </div>
                   <div>
                     <span className={labelClass}>¿Vive?</span>

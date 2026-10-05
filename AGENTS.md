@@ -129,7 +129,7 @@ Vertical genealogical relations.
 - `id` (UUID, PK).
 - `parent_id` (UUID, FK $\rightarrow$ `persons.id`).
 - `child_id` (UUID, FK $\rightarrow$ `persons.id`).
-- `relationship_type` (`'biological' | 'adoptive' | 'step'`).
+- `relationship_type` (`'biological' | 'adopted' | 'foster' | 'step'`).
 - `status` (`'confirmed' | 'pending' | 'rejected'`).
 
 ### 4.4. `union_edges`
@@ -156,7 +156,7 @@ Access control table for sharing trees with external friends.
 To allow editing and reassigning roles without mutating database schemas:
 - `parentConnections`: `{ edgeId: string; parentId: string; parentName: string; relationshipType: string }[]`
 - `childConnections`: `{ edgeId: string; childId: string; childName: string; relationshipType: string }[]`
-Exposed on `FamilyMemberItem`, `EditableMemberData`, and `TreeNodeData`. Used by `EditMemberModal` to list and unlink individual children or convert roles.
+Exposed on `FamilyMemberItem`, `EditableMemberData`, and `TreeNodeData`. The edit modal now loads relations fresh via `getMemberRelationsAction` instead.
 
 ---
 
@@ -286,7 +286,7 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
 - **The Solution**:
   1. Explicit `sibling_type` ('both' | 'maternal' | 'paternal') in `createFamilyMemberAction` and `AddMemberModal`.
   2. Opt-in co-marriage (`create_union`) when registering a second parent (no automatic marriages).
-  3. One-click role conversion (`convertParentToSiblingAction`) and individual child unlinking (`unlinkParentChildAction`) in `EditMemberModal`.
+  3. Mistakes are fixed in `EditMemberModal` → Familia (Quitar) and with the validated link tool (`linkPersonsAction`). `convertParentToSiblingAction` was removed.
   4. Removal of synthetic married co-parent unions in `get-family-graph.ts`.
 
 ### ⚠️ Pitfall 6: Global Centering of Descendant Generations (`gen > 0`)
@@ -338,33 +338,26 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
 ### Registering a step-child
 In `AddMemberModal` → Hijo/Hija → "¿De quién es hijo/a?": `with:<id>` (anchor + partner), `solo` (anchor only, `co_parent_id = "none"`), or `step:<id>` (only the partner's child: sent with `anchor_person_id = <partner>`). The graph (8.1) shows children of in-law partners, labeled `Hijastro/a de X` / `Hermanastro/a`.
 
-### Unlinking an accidental child from a parent node
-1. Call `unlinkParentChildAction` in `src/features/genealogy/actions.ts`.
-2. Pass `parent_id` and `child_id`.
-3. The server action removes the specific row from `parent_child_edges` without deleting either person record.
-4. Used in `EditMemberModal` under the "Descendencia (Hijos Registrados)" section.
+### Editing a person (`EditMemberModal`)
+Two tabs, nothing else:
+- **Datos**: name fields, sex (Hombre/Mujer/No sé), birth date, living + death date, birth place, notes; "otro apellido" (`maiden_name`) only on demand. Dates are validated live and on the server (no future dates, death ≥ birth).
+- **Familia**: `getMemberRelationsAction(personId)` returns ALL parents, partners (every union, including exes) and children. Each row has "Quitar" with inline confirmation (`unlinkParentChildAction`, `dissolveUnionAction`) and partners have a union-type select (`updateUnionStatusAction`). "Vincular … ya registrado" embeds `LinkComposer` (same validated planner as "Vincular familiares").
+- Do NOT reintroduce role-conversion or "¿Es tu hermano?" suggestion banners: they pushed users into wrong edits. Fix mistakes with Quitar + Vincular.
 
-### Role Conversion: Converting a misassigned parent into a sibling
-1. Call `convertParentToSiblingAction` in `src/features/genealogy/actions.ts`.
-2. Pass `misassigned_person_id` and `anchor_child_id` (the sibling who was mistakenly linked as their child).
-3. The server action:
-   - Identifies the anchor's actual parents.
-   - Dissolves any synthetic or erroneous `union_edges` between `misassigned_person_id` and the anchor's parents.
-   - Removes accidental `parent_child_edges` between `misassigned_person_id` and the anchor (and anchor's siblings).
-   - Links `misassigned_person_id` as a child to the anchor's parents with `relationship_type = 'biological'`.
-4. Used in `EditMemberModal` under "Asistente Genealógico: Reasignar Rol".
+### Permissions for relationship changes
+`checkCanEditRelations(supabase, personIds)` in `actions.ts` is the single rule: User Zero, or every person is in the user's family (`getUserFamilyScope`) and none is claimed by another account. Editing/deleting a person's data is limited to User Zero, the record's creator, or members of the same family.
 
 ### Adding a new access tier for friend sharing
 1. Update `TreePermissionTier` union in `src/features/genealogy/types.ts`.
 2. Update the tier filter in `get-family-graph.ts` (section 8).
 3. Update the tier selector in `friends-manager-modal.tsx` and badge in `tree-selector.tsx`.
 
-### Verifying graph integrity locally
-Run tests with node pointing to the local package:
+### Verifying graph logic locally
 ```bash
-npm run build
+npm test        # vitest: integrity, generations, visibility, kinship labels, layout, link planner
+npm run build   # must pass with 0 TypeScript errors
 ```
-Ensure `next build` passes with 0 TypeScript errors.
+Pure logic lives in `src/features/genealogy/utils/` (`visible-nodes.ts`, `tree-layout.ts`, `kinship-inference.ts`, `graph-integrity.ts`, `link-planner.ts`). The shared fixture `utils/__tests__/fixtures.ts` models a blended family with corrupt data; add a case there for every new bug before fixing it.
 
 ---
 *Maintained for Antigravity AI Agents & Deepmind Coding Systems.*

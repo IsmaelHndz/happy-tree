@@ -318,9 +318,6 @@ export function FamilyDirectory({
             id: m.id,
             name: formatFullName(m),
           }))}
-          viewerParents={members
-            .filter((m) => m.relationshipCategory === "parent" && (m.relationshipLabel === "Madre" || m.relationshipLabel === "Padre" || m.relationshipLabel === "Progenitor"))
-            .map((p) => ({ id: p.id, name: formatFullName(p) }))}
           isUserZero={isUserZero}
           isSelf={false}
           isOpen={Boolean(activeEditMember)}
