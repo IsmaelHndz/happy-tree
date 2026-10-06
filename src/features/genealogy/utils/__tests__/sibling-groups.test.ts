@@ -32,6 +32,11 @@ describe("grupos de hermanos por unión", () => {
     expect(conJuan.color).not.toBe(DEFAULT_LINE_COLOR);
   });
 
+  it("las familias fuera de la línea directa también tienen color propio", () => {
+    const groups = build("luis");
+    expect(groups.find((g) => g.key === "rubi")!.color).not.toBe(DEFAULT_LINE_COLOR);
+  });
+
   it("etiqueta cada grupo con la pareja que no es compartida", () => {
     const groups = build("sixto");
     expect(groups.find((g) => g.key === "aud_juan")!.label).toBe("con Juan");
@@ -96,10 +101,20 @@ describe("ramas familiares para el resaltado", () => {
     expect(conMason.has("luis")).toBe(false);
   });
 
-  it("los nietos pertenecen a la rama de su abuela con esa pareja", () => {
-    expect(branches.branchOfPerson.get("ism")).toBe("aud_mason");
+  it("cada persona activa la familia de sus padres", () => {
+    expect(branches.branchOfPerson.get("ism")).toBe("rubi");
+    expect(branches.branchOfPerson.get("rubi")).toBe("aud_mason");
     expect(branches.branchOfPerson.get("luis")).toBe("aud_juan");
-    // Audelia está en las dos ramas, no se asigna a ninguna
+  });
+
+  it("sin padres visibles, activa la única familia donde es padre", () => {
+    expect(branches.branchOfPerson.get("juan")).toBe("aud_juan");
+    expect(branches.branchOfPerson.get("mason")).toBe("aud_mason");
+    // Audelia es madre en dos familias: ambiguo, no se asigna
     expect(branches.branchOfPerson.has("aud")).toBe(false);
+  });
+
+  it("toda familia tiene rama, no solo las de varias parejas", () => {
+    expect(branches.membersByKey.get("rubi")).toEqual(new Set(["rubi", "ism"]));
   });
 });

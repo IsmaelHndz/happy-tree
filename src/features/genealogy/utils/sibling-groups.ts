@@ -1,9 +1,10 @@
 // Grupos de hermanos por unidad parental (horquillas del canvas) y su color.
-// Cuando una persona tiene hijos con varias parejas, cada grupo recibe un color
-// distinto para que se vea de qué unión viene cada hijo.
+// Regla única para todo el árbol: verde para la línea directa del foco y un color
+// propio para cada otra familia. Dos familias con un padre en común nunca comparten color.
 
 export const DEFAULT_LINE_COLOR = "#10b981"; // emerald-500, también la línea directa al foco
 // Sin rosa (lo usa el corazón) ni verde (línea directa).
+export const ROOT_STRIPE_COLOR = "#3f3f46"; // tarjetas sin padres visibles
 export const UNION_PALETTE = ["#38bdf8", "#f59e0b", "#a78bfa", "#fb7185", "#22d3ee", "#a3e635"];
 
 export interface SiblingGroup {
@@ -16,6 +17,12 @@ export interface SiblingGroup {
   isDirectLine: boolean;
   // Solo en grupos multi-pareja: "con Juan", "Juan y Ana", "solo de Audelia"
   label: string | null;
+}
+
+function hashKey(key: string): number {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return h;
 }
 
 export function parentGroupKey(parentIds: string[]): string {
@@ -84,14 +91,15 @@ export function buildSiblingGroups(input: {
     const isDirectLine = childIds.some((c) => directLine.has(c));
 
     let color = DEFAULT_LINE_COLOR;
-    if (isMultiPartner && !isDirectLine) {
-      // Primer color de la paleta que no use otro grupo que comparte un padre.
+    if (!isDirectLine) {
+      // Color estable según la familia (no cambia al agregar a otras personas),
+      // saltando los que ya usa otra familia con un padre en común.
       const used = new Set(
         sharedParents.flatMap((p) => keysByParent.get(p)!).map((k) => colorByKey.get(k)).filter(Boolean)
       );
-      used.add(DEFAULT_LINE_COLOR);
-      const free = UNION_PALETTE.filter((c) => !used.has(c));
-      color = free[0] ?? UNION_PALETTE[groups.length % UNION_PALETTE.length];
+      const start = hashKey(key) % UNION_PALETTE.length;
+      const rotated = [...UNION_PALETTE.slice(start), ...UNION_PALETTE.slice(0, start)];
+      color = rotated.find((c) => !used.has(c)) ?? rotated[0];
     }
     colorByKey.set(key, color);
 
@@ -144,10 +152,11 @@ export function staggerBusRows<T extends { busY: number; busStartX: number; busE
 }
 
 export interface FamilyBranches {
-  // Por cada grupo multi-pareja: sus padres, hijos, descendientes visibles y las parejas de esos descendientes
+  // Por cada grupo: sus padres, hijos, descendientes visibles y las parejas de esos descendientes
   membersByKey: Map<string, Set<string>>;
-  // Rama a la que pertenece cada persona (la unión multi-pareja más cercana hacia arriba).
-  // Los padres compartidos (p. ej. Audelia) no se asignan: pertenecen a varias ramas.
+  // Familia que se resalta al pasar por cada persona: la de sus padres; si no tiene
+  // padres visibles, la única familia donde es padre o madre. Quien es padre en
+  // varias familias (p. ej. Audelia) no se asigna, porque sería ambiguo.
   branchOfPerson: Map<string, string>;
 }
 
@@ -182,7 +191,6 @@ export function buildFamilyBranches(input: {
   const best = new Map<string, { key: string; depth: number }>();
 
   for (const group of groups) {
-    if (!group.isMultiPartner) continue;
     const members = new Set<string>(group.parentIds);
     // BFS iterativo hacia abajo desde los hijos de esta unión
     const queue: { id: string; depth: number }[] = group.childIds.map((id) => ({ id, depth: 1 }));
@@ -209,5 +217,12 @@ export function buildFamilyBranches(input: {
 
   const branchOfPerson = new Map<string, string>();
   best.forEach(({ key }, id) => branchOfPerson.set(id, key));
+  const groupsAsParent = new Map<string, string[]>();
+  for (const g of groups) {
+    for (const p of g.parentIds) groupsAsParent.set(p, [...(groupsAsParent.get(p) ?? []), g.key]);
+  }
+  groupsAsParent.forEach((keys, id) => {
+    if (!branchOfPerson.has(id) && keys.length === 1) branchOfPerson.set(id, keys[0]);
+  });
   return { membersByKey, branchOfPerson };
 }

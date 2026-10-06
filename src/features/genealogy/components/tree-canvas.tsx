@@ -7,7 +7,13 @@ import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { TreeSearchModal } from "./tree-search-modal";
-import { buildFamilyBranches, buildSiblingGroups, parentGroupKey, staggerBusRows } from "../utils/sibling-groups";
+import {
+  buildFamilyBranches,
+  buildSiblingGroups,
+  parentGroupKey,
+  ROOT_STRIPE_COLOR,
+  staggerBusRows,
+} from "../utils/sibling-groups";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -179,7 +185,6 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   const groupByKey = new Map(siblingGroups.map((g) => [g.key, g]));
   const groupKeyOfChild = new Map<string, string>();
   siblingGroups.forEach((g) => g.childIds.forEach((c) => groupKeyOfChild.set(c, g.key)));
-  const hasMultiPartnerGroups = siblingGroups.some((g) => g.isMultiPartner);
 
   const visibleUnionEdges = graph.edges.filter(
     (e) => e.type === "union" && nodeMap.has(e.sourceId) && nodeMap.has(e.targetId)
@@ -507,9 +512,8 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           const isMale = node.gender === "male";
           const initials = `${node.firstName[0] || ""}${node.lastName[0] || ""}`.toUpperCase();
           const childGroupKey = groupKeyOfChild.get(node.id);
-          const childGroup = childGroupKey ? groupByKey.get(childGroupKey) : undefined;
-          // Solo los hijos de alguien con varias parejas llevan franja de color
-          const multiGroup = childGroup?.isMultiPartner ? childGroup : undefined;
+          // Franja superior con el color de la familia de la que viene (gris si no hay padres visibles)
+          const stripeColor = (childGroupKey && groupByKey.get(childGroupKey)?.color) || ROOT_STRIPE_COLOR;
           const isDimmed = highlightedIds !== null && !highlightedIds.has(node.id);
           const nodeBranchKey = branchOfPerson.get(node.id);
 
@@ -544,13 +548,11 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   : "bg-neutral-900/90 border-neutral-800 hover:border-neutral-700"
               }`}
             >
-              {multiGroup && (
-                <span
-                  aria-hidden
-                  className="absolute top-0 left-4 right-4 h-[3px] rounded-full"
-                  style={{ backgroundColor: multiGroup.color }}
-                />
-              )}
+              <span
+                aria-hidden
+                className="absolute top-0 left-4 right-4 h-[3px] rounded-full"
+                style={{ backgroundColor: stripeColor }}
+              />
 
               {/* Encabezado del Nodo */}
               <div className="flex items-start justify-between gap-1.5">
@@ -798,17 +800,16 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
         </div>
         <div className="flex items-center gap-1.5 border-l border-neutral-800 pl-3">
           <span className="w-2.5 h-1 bg-emerald-400 inline-block rounded" />
-          <span>Horquilla de Hermanos</span>
+          <span>Tu línea directa</span>
         </div>
-        {hasMultiPartnerGroups && (
-          <div className="flex items-center gap-1.5">
-            <span className="flex gap-0.5">
-              <span className="w-2.5 h-1 bg-sky-400 inline-block rounded" />
-              <span className="w-2.5 h-1 bg-amber-400 inline-block rounded" />
-            </span>
-            <span>Hijos con otra pareja · pasa el cursor o toca un ♥ para resaltar su familia</span>
-          </div>
-        )}
+        <div className="flex items-center gap-1.5">
+          <span className="flex gap-0.5">
+            <span className="w-2.5 h-1 bg-sky-400 inline-block rounded" />
+            <span className="w-2.5 h-1 bg-amber-400 inline-block rounded" />
+            <span className="w-2.5 h-1 bg-violet-400 inline-block rounded" />
+          </span>
+          <span>Otras familias · pasa el cursor o toca a alguien para resaltar su familia</span>
+        </div>
         <div className="flex items-center gap-1.5">
           <span className="text-red-400 font-bold">≠</span>
           <span>Separados / Divorciados</span>
