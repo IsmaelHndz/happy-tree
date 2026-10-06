@@ -62,6 +62,18 @@ WITH checks(orden, comprobacion, ok, detalle) AS (
           WHERE table_schema = 'public' AND table_name = 'invitation_tokens' AND column_name = 'invited_email'),
         NULL
 
+    UNION ALL
+    SELECT 34, 'Nivel "profile" (solo ficha) en tree_permission_tier',
+        EXISTS (SELECT 1 FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid
+                 WHERE t.typname = 'tree_permission_tier' AND e.enumlabel = 'profile'),
+        NULL
+    UNION ALL
+    SELECT 35, 'Columnas de propuesta en social_connections',
+        (SELECT count(*) FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'social_connections'
+            AND column_name IN ('proposed_union_type', 'proposed_by_user_id')) = 2,
+        NULL
+
     -- 5. Funciones RPC (deben ser SECURITY DEFINER)
     UNION ALL
     SELECT 40 + row_number() OVER (ORDER BY f.name), 'Función ' || f.name || ' (security definer)',

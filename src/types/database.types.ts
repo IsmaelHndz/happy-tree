@@ -11,7 +11,7 @@ export type ParentChildRelationshipType = "biological" | "adopted" | "foster" | 
 export type UnionType = "married" | "civil_union" | "divorced" | "separated" | "partner";
 export type EdgeStatus = "pending_confirmation" | "confirmed" | "rejected";
 export type InvitationStatus = "pending" | "accepted" | "expired" | "revoked";
-export type TreePermissionTier = "basic" | "intermediate" | "advanced";
+export type TreePermissionTier = "profile" | "basic" | "intermediate" | "advanced";
 export type TreeAccessStatus = "pending" | "approved" | "rejected" | "revoked";
 export type SocialConnectionKind = "friend" | "dating";
 
@@ -297,6 +297,8 @@ export interface Database {
           person_a_id: string;
           person_b_id: string;
           kind: SocialConnectionKind;
+          proposed_union_type: "partner" | "married" | null;
+          proposed_by_user_id: string | null;
           created_by_user_id: string | null;
           created_at: string;
           updated_at: string;
@@ -306,6 +308,8 @@ export interface Database {
           person_a_id: string;
           person_b_id: string;
           kind?: SocialConnectionKind;
+          proposed_union_type?: "partner" | "married" | null;
+          proposed_by_user_id?: string | null;
           created_by_user_id?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -315,6 +319,8 @@ export interface Database {
           person_a_id?: string;
           person_b_id?: string;
           kind?: SocialConnectionKind;
+          proposed_union_type?: "partner" | "married" | null;
+          proposed_by_user_id?: string | null;
           created_by_user_id?: string | null;
           created_at?: string;
           updated_at?: string;

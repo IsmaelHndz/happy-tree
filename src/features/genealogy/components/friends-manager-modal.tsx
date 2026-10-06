@@ -312,7 +312,32 @@ export function FriendsManagerModal({ initialPendingCount = 0 }: FriendsManagerM
                           <label className="text-[11px] font-medium text-neutral-400 block">
                             Selecciona el nivel de permiso que le otorgas:
                           </label>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <label
+                              className={`flex flex-col p-2.5 rounded-xl border cursor-pointer transition text-left ${
+                                selectedTiers[req.id] === "profile"
+                                  ? "bg-neutral-800/60 border-neutral-500/60 text-white"
+                                  : "bg-neutral-900/60 border-neutral-800 text-neutral-400 hover:border-neutral-700"
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5 text-xs font-semibold text-neutral-200">
+                                <input
+                                  type="radio"
+                                  name={`tier-${req.id}`}
+                                  value="profile"
+                                  checked={selectedTiers[req.id] === "profile"}
+                                  onChange={() =>
+                                    setSelectedTiers({ ...selectedTiers, [req.id]: "profile" })
+                                  }
+                                  className="accent-neutral-400"
+                                />
+                                <span>Solo ficha</span>
+                              </div>
+                              <span className="text-[10px] text-neutral-400 mt-1">
+                                Únicamente tu ficha, sin ningún familiar.
+                              </span>
+                            </label>
+
                             <label
                               className={`flex flex-col p-2.5 rounded-xl border cursor-pointer transition text-left ${
                                 selectedTiers[req.id] === "basic"
@@ -384,7 +409,7 @@ export function FriendsManagerModal({ initialPendingCount = 0 }: FriendsManagerM
                                 <span>Avanzado</span>
                               </div>
                               <span className="text-[10px] text-neutral-400 mt-1">
-                                Acceso total al árbol genealógico a libertad.
+                                Todo el árbol conectado: también bisabuelos y parientes lejanos.
                               </span>
                             </label>
                           </div>
@@ -452,6 +477,7 @@ export function FriendsManagerModal({ initialPendingCount = 0 }: FriendsManagerM
                             }
                             className="bg-neutral-900 border border-neutral-800 text-xs text-neutral-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-teal-500 transition"
                           >
+                            <option value="profile">Solo ficha (sin familia)</option>
                             <option value="basic">Nivel Básico (Casa)</option>
                             <option value="intermediate">Nivel Intermedio</option>
                             <option value="advanced">Nivel Avanzado (Total)</option>

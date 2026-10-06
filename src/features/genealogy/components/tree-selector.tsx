@@ -9,7 +9,7 @@ interface TreeSelectorProps {
   currentFriendId?: string;
   isGuest: boolean;
   treeOwnerName?: string;
-  currentTier?: "basic" | "intermediate" | "advanced";
+  currentTier?: "profile" | "basic" | "intermediate" | "advanced";
   accessibleTrees: AccessibleTreeOption[];
 }
 
@@ -36,6 +36,12 @@ export function TreeSelector({
 
   const tierBadge = (tier?: string) => {
     switch (tier) {
+      case "profile":
+        return (
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-neutral-900 text-neutral-300 border border-neutral-700">
+            Solo ficha
+          </span>
+        );
       case "basic":
         return (
           <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-blue-950/80 text-blue-400 border border-blue-800/40">

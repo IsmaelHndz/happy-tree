@@ -2,15 +2,17 @@
  * SELECCIÓN DE PERSONAS VISIBLES EN EL ÁRBOL (pura, sin dependencias de servidor)
  *
  * A partir de la persona central y del nivel de permisos decide qué personas se dibujan:
+ * - profile: solo la ficha de la persona central, sin ningún familiar.
  * - basic: familia de casa (padres, hijos, pareja, hermanos).
- * - intermediate / advanced / owner: familia extendida (abuelos, tíos, primos, sobrinos, nietos)
+ * - intermediate / owner: familia extendida (abuelos, tíos, primos, sobrinos, nietos)
  *   más el completado de familias ensambladas (ver paso 3).
+ * - advanced: todo lo anterior más el resto del componente conectado (bisabuelos, primos lejanos…).
  *
  * Las uniones recibidas deben estar ya saneadas (`partitionUnionsByIntegrity`) y filtradas
  * por visibilidad (exparejas solo si comparten hijos).
  */
 
-export type VisibilityTier = "basic" | "intermediate" | "advanced" | "owner";
+export type VisibilityTier = "profile" | "basic" | "intermediate" | "advanced" | "owner";
 
 export interface VisibleNodesResult {
   nodeIds: string[];
@@ -38,6 +40,23 @@ export function selectVisibleNodeIds({
   unions: { person_a_id: string; person_b_id: string }[];
   tier: VisibilityTier;
 }): VisibleNodesResult {
+  if (tier === "profile") {
+    return {
+      nodeIds: [centerPersonId],
+      parentIds: [],
+      childIds: [],
+      spouseIds: [],
+      siblingIds: [],
+      grandParentIds: [],
+      siblingSpouseIds: [],
+      grandChildIds: [],
+      uncleAuntIds: [],
+      uncleSpouseIds: [],
+      cousinIds: [],
+      nephewNieceIds: [],
+    };
+  }
+
   const parentsOf = new Map<string, string[]>();
   const childrenOf = new Map<string, string[]>();
   const partnersOf = new Map<string, string[]>();
@@ -112,6 +131,21 @@ export function selectVisibleNodeIds({
     Array.from(visible).forEach((id) => (partnersOf.get(id) ?? []).forEach((partnerId) => visible.add(partnerId)));
     const inLawIds = Array.from(visible).filter((id) => !bloodIds.has(id));
     inLawIds.forEach((id) => (childrenOf.get(id) ?? []).forEach((c) => visible.add(c)));
+  }
+
+  // 4. Avanzado: todo el componente conectado (BFS iterativo por padres, hijos y parejas)
+  if (tier === "advanced") {
+    const queue = [centerPersonId];
+    const seen = new Set<string>(queue);
+    for (let i = 0; i < queue.length; i++) {
+      const id = queue[i];
+      for (const next of [...(parentsOf.get(id) ?? []), ...(childrenOf.get(id) ?? []), ...(partnersOf.get(id) ?? [])]) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+    seen.forEach((id) => visible.add(id));
   }
 
   return {

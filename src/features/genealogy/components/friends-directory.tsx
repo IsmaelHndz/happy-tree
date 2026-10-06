@@ -10,7 +10,7 @@ import {
   setFriendTreeAccessAction,
   updateFriendKindAction,
 } from "@/features/genealogy/friends-actions";
-import { convertSocialToUnionAction } from "@/features/genealogy/actions";
+import { convertSocialToUnionAction, respondUnionProposalAction } from "@/features/genealogy/actions";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { formatFullName, type FriendItem, type TreePermissionTier, type UserSearchResultItem } from "../types";
@@ -31,14 +31,18 @@ import {
   X,
 } from "lucide-react";
 
+const UNION_LABEL = { partner: "unión libre", married: "casados" } as const;
+
 const TIER_OPTIONS: { value: TreePermissionTier | "none"; label: string }[] = [
   { value: "none", label: "No ve tu árbol" },
+  { value: "profile", label: "Solo tu ficha · nada de familia" },
   { value: "basic", label: "Básico · familia de casa" },
   { value: "intermediate", label: "Intermedio · familia extendida" },
   { value: "advanced", label: "Avanzado · árbol completo" },
 ];
 
 const TIER_SHORT: Record<TreePermissionTier, string> = {
+  profile: "Solo ficha",
   basic: "Básico",
   intermediate: "Intermedio",
   advanced: "Avanzado",
@@ -261,12 +265,57 @@ export function FriendsDirectory({ friends, loadError }: FriendsDirectoryProps) 
                       </button>
                     ))}
 
-                  {isDating &&
+                  {f.proposedUnionType && (
+                    <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-900/60 space-y-2">
+                      {f.proposedByMe ? (
+                        <p className="text-[11px] text-amber-200">
+                          Propusiste hacerlo formal ({UNION_LABEL[f.proposedUnionType]}). Esperando a que {f.firstName} responda.
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-amber-200">
+                          {f.firstName} propone hacerlo formal ({UNION_LABEL[f.proposedUnionType]}). Si aceptas, aparecerán como pareja
+                          y sus familias quedarán conectadas.
+                        </p>
+                      )}
+                      <div className="flex items-center gap-1.5">
+                        {!f.proposedByMe && (
+                          <button
+                            onClick={() =>
+                              run(`a:${f.connectionId}`, async () => {
+                                const res = await respondUnionProposalAction({ connectionId: f.connectionId, accept: true });
+                                return res.error ? { success: false, error: res.error } : { success: true, message: res.message };
+                              })
+                            }
+                            disabled={busy === `a:${f.connectionId}`}
+                            className="flex-1 px-2 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-semibold flex items-center justify-center gap-1"
+                          >
+                            {busy === `a:${f.connectionId}` && <Loader2 className="w-3 h-3 animate-spin" />}
+                            Aceptar
+                          </button>
+                        )}
+                        <button
+                          onClick={() =>
+                            run(`a:${f.connectionId}`, async () => {
+                              const res = await respondUnionProposalAction({ connectionId: f.connectionId, accept: false });
+                              return res.error ? { success: false, error: res.error } : { success: true, message: res.message };
+                            })
+                          }
+                          disabled={busy === `a:${f.connectionId}`}
+                          className="flex-1 px-2 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-semibold"
+                        >
+                          {f.proposedByMe ? "Cancelar propuesta" : "Rechazar"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {isDating && !f.proposedUnionType &&
                     (pending === `f:${f.connectionId}` ? (
                       <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800 space-y-2">
                         <p className="text-[11px] text-neutral-300">
                           Pasará a ser pareja en tu árbol. La familia de {f.firstName} quedará conectada a la tuya y
                           podrán verse entre sí según los niveles de acceso.
+                          {f.isClaimed && ` Como ${f.firstName} tiene su propia cuenta, recibirá una propuesta y la unión se creará cuando la acepte.`}
                         </p>
                         <div className="flex items-center gap-1.5">
                           {(

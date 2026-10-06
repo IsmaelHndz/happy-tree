@@ -204,11 +204,28 @@ export async function getFamilyGraph(
   // 5. Determinar el nodo central del árbol (Focus Person) y validar autorización estricta
   let centerPersonId = userPersonId;
 
+  // Personas que un invitado puede ver: lo que su nivel permite a partir del titular del árbol.
+  // Impide centrar el árbol en alguien fuera de ese alcance (p. ej. ?friendId=…&focus=<cualquier id>)
+  // y recorta lo que se carga cuando navega a otro familiar dentro del alcance.
+  let grantedNodeIds: Set<string> | null = null;
+  const grantFor = (rootPersonId: string, tier: TreePermissionTier) =>
+    new Set(
+      selectVisibleNodeIds({
+        centerPersonId: rootPersonId,
+        parentEdges: allParentEdges ?? [],
+        unions: treeVisibleUnions,
+        tier,
+      }).nodeIds
+    );
+
   if (isViewerGuest && defaultFriendPersonId) {
-    centerPersonId =
-      focusPersonId && focusPersonId.trim().length > 0
-        ? focusPersonId.trim()
-        : defaultFriendPersonId;
+    const requested = focusPersonId?.trim();
+    if (isUserZero) {
+      centerPersonId = requested || defaultFriendPersonId;
+    } else {
+      grantedNodeIds = grantFor(defaultFriendPersonId, viewerTier);
+      centerPersonId = requested && grantedNodeIds.has(requested) ? requested : defaultFriendPersonId;
+    }
   } else if (focusPersonId && focusPersonId.trim().length > 0) {
     const reqFocus = focusPersonId.trim();
 
@@ -228,7 +245,8 @@ export async function getFamilyGraph(
         isViewerGuest = true;
         viewerTier = matchingShare.tier;
         treeOwnerName = matchingShare.ownerName;
-        centerPersonId = reqFocus;
+        grantedNodeIds = grantFor(matchingShare.targetPersonId, viewerTier);
+        centerPersonId = grantedNodeIds.has(reqFocus) ? reqFocus : matchingShare.targetPersonId;
       } else {
         // ACCESO DENEGADO A ÁRBOL AJENO SIN PERMISO:
         // Evitar que usuarios externos vean árboles a los que no tienen autorización concedida
@@ -262,7 +280,7 @@ export async function getFamilyGraph(
 
   // 7-8. Personas visibles según el nodo central y el nivel de permisos (lógica pura en utils/visible-nodes.ts)
   const {
-    nodeIds,
+    nodeIds: tierNodeIds,
     parentIds,
     childIds,
     spouseIds,
@@ -278,6 +296,7 @@ export async function getFamilyGraph(
     unions: treeVisibleUnions,
     tier: isViewerGuest ? viewerTier ?? "basic" : "owner",
   });
+  const nodeIds = grantedNodeIds ? tierNodeIds.filter((id) => grantedNodeIds.has(id)) : tierNodeIds;
 
 
   // 9. Consultar los datos de todas las personas autorizadas en el grafo

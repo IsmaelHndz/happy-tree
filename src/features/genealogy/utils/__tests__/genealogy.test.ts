@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyUnionIssue, partitionUnionsByIntegrity, wouldCreateParentCycle } from "../graph-integrity";
-import { inferKinship } from "../kinship-inference";
+import { getConnectedFamilyIds, inferKinship } from "../kinship-inference";
 import { assignGenerations, selectVisibleNodeIds } from "../visible-nodes";
 import { computeTreeLayout, TREE_LAYOUT } from "../tree-layout";
 import { ALL_IDS, allUnions, corruptUnions, genderOf, parentEdges, personsMap, validUnions } from "./fixtures";
@@ -68,7 +68,7 @@ describe("generaciones", () => {
 });
 
 describe("personas visibles", () => {
-  const visible = (tier: "basic" | "intermediate" | "advanced" | "owner") =>
+  const visible = (tier: "profile" | "basic" | "intermediate" | "advanced" | "owner") =>
     new Set(selectVisibleNodeIds({ centerPersonId: "ism", parentEdges, unions: saneUnions, tier }).nodeIds);
 
   it("nivel básico: solo familia de casa", () => {
@@ -90,8 +90,31 @@ describe("personas visibles", () => {
     for (const id of mustSee) expect([id, v.has(id)]).toEqual([id, true]);
   });
 
+  it("nivel solo ficha: únicamente la persona central, sin familia", () => {
+    const res = selectVisibleNodeIds({ centerPersonId: "ism", parentEdges, unions: saneUnions, tier: "profile" });
+    expect(res.nodeIds).toEqual(["ism"]);
+    expect(res.parentIds).toEqual([]);
+    expect(res.spouseIds).toEqual([]);
+  });
+
+  it("los niveles son crecientes: ficha ⊂ básico ⊂ intermedio ⊆ avanzado", () => {
+    const tiers = ["profile", "basic", "intermediate", "advanced"] as const;
+    for (let i = 1; i < tiers.length; i++) {
+      const smaller = visible(tiers[i - 1]);
+      const bigger = visible(tiers[i]);
+      for (const id of smaller) expect([tiers[i], id, bigger.has(id)]).toEqual([tiers[i], id, true]);
+    }
+    expect(visible("basic").size).toBeGreaterThan(visible("profile").size);
+    expect(visible("intermediate").size).toBeGreaterThan(visible("basic").size);
+  });
+
+  it("avanzado: exactamente el componente conectado de la persona", () => {
+    const component = getConnectedFamilyIds("ism", parentEdges, saneUnions);
+    expect(visible("advanced")).toEqual(component);
+  });
+
   it("nunca filtra personas de otras familias", () => {
-    for (const tier of ["basic", "intermediate", "advanced", "owner"] as const) {
+    for (const tier of ["profile", "basic", "intermediate", "advanced", "owner"] as const) {
       const v = visible(tier);
       for (const id of ["xavi", "xime", "xoel"]) expect(v.has(id)).toBe(false);
     }

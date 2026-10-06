@@ -46,7 +46,9 @@ export default async function TreePage({ searchParams }: TreePageProps) {
   }));
 
   const tierDescription =
-    graph.viewerTier === "basic"
+    graph.viewerTier === "profile"
+      ? "Solo la ficha (sin familia)"
+      : graph.viewerTier === "basic"
       ? "Familia de Casa (Básico)"
       : graph.viewerTier === "intermediate"
       ? "Familia Extendida (Intermedio)"

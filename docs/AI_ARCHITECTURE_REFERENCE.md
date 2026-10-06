@@ -142,10 +142,12 @@ Access control table for sharing trees with external friends.
 - `requester_user_id` (UUID, FK $\rightarrow$ `profiles.id`).
 - `granter_user_id` (UUID, FK $\rightarrow$ `profiles.id`).
 - `granter_person_id` (UUID, FK $\rightarrow$ `persons.id`).
-- `tier` (`'basic' | 'intermediate' | 'advanced'`):
+- `tier` (`'profile' | 'basic' | 'intermediate' | 'advanced'`):
+  - `'profile'`: Only the granter's own card, no relatives at all (for exes and acquaintances).
   - `'basic'`: Immediate home family only (Parents, Siblings, Spouse, Children).
   - `'intermediate'`: Home family + Grandparents, Uncles, Aunts, Cousins, Nephews/Nieces, Grandchildren.
-  - `'advanced'`: Full genealogical graph without restrictions.
+  - `'advanced'`: Intermediate + the rest of the connected component (great-grandparents, distant relatives). The owner's own view (`owner`) is unchanged.
+  - Guests are clamped server-side: `get-family-graph.ts` builds `grantedNodeIds` from the granter's person and tier; `?focus=` outside that set falls back to the granter, and loaded nodes are intersected with it.
 - `status` (`'pending' | 'approved' | 'rejected'`).
 
 ### 4.6. Dynamic Relationship Payloads (`childConnections` & `parentConnections`)
@@ -159,6 +161,7 @@ Friends and dating relationships, kept outside the genealogical graph (migration
 - `person_a_id`, `person_b_id` (UUID, FK $\rightarrow$ `persons.id`): one row per pair, order-independent (unique on `LEAST/GREATEST`).
 - `kind` (`'friend' | 'dating'`).
 - `created_by_user_id` (UUID).
+- `proposed_union_type` (`'partner' | 'married' | null`) and `proposed_by_user_id`: pending proposal to make a dating relationship formal (migration `20261005000001`).
 - RLS: visible/editable by the creator, the owners of either person, and User Zero.
 - RPC `grant_tree_access(p_requester_user_id, p_tier)`: the owner grants or changes access to their tree directly (approved share), without a prior request.
 
@@ -355,7 +358,7 @@ Two tabs, nothing else:
 1. "Agregar amigo" calls `createFriendAction` in `friends-actions.ts`: links an existing account (`existingPersonId`, found via `searchUsersForSharingAction`) or creates an unclaimed `persons` row plus the `social_connections` row (rolled back if the link fails). The invite reuses `InviteModal` with relationship `Amigo/Amiga/Novio/Novia`.
 2. "Terminamos · quedamos como amigos" calls `updateFriendKindAction(id, 'friend')`. "Quitar" calls `removeFriendAction`, which also deletes the person if it is unclaimed, was created by the user and has no other links.
 3. Once the friend has an account, "Qué ve de tu árbol" calls `setFriendTreeAccessAction(personId, tier | 'none')`.
-4. "Empezamos a salir" (`updateFriendKindAction(id, 'dating')`) and "Hacerlo formal · unión libre o casados" (`convertSocialToUnionAction`): the latter creates the `union_edges` row (validated with `classifyUnionIssue`), deletes the social row and thereby merges both families. Either person (or User Zero) can do it; no confirmation from the other party exists yet.
+4. "Empezamos a salir" (`updateFriendKindAction(id, 'dating')`) and "Hacerlo formal · unión libre o casados" (`convertSocialToUnionAction`): the latter creates the `union_edges` row (validated with `classifyUnionIssue`), deletes the social row and thereby merges both families. Either person (or User Zero) can do it; if the other person has an account, `convertSocialToUnionAction` stores a proposal (`proposed_union_type`) instead and `respondUnionProposalAction` lets them accept (creates the union) or reject; the proposer can cancel. Unclaimed friends and User Zero (not a party) apply immediately.
 5. A dating relationship that was registered as a union (shows up as "Ex-pareja (Separados)"): the directory card offers "¿Fue un noviazgo? Pasar a amistad" → `convertUnionToSocialAction`. Only the two people or User Zero can do it. The union is deleted unless they share children.
 
 ### Adding a new access tier for friend sharing

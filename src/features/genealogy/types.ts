@@ -152,7 +152,7 @@ export function calculateAge(
   return Math.max(0, age);
 }
 
-export type TreePermissionTier = "basic" | "intermediate" | "advanced";
+export type TreePermissionTier = "profile" | "basic" | "intermediate" | "advanced";
 export type TreeAccessStatus = "pending" | "approved" | "rejected" | "revoked";
 
 export interface TreeAccessShareItem {
@@ -208,6 +208,10 @@ export interface FriendItem {
   friendUserId: string | null;
   invitationToken: string | null;
   invitedEmail: string | null;
+  /** Propuesta pendiente de hacer formal el noviazgo (null = ninguna) */
+  proposedUnionType: "partner" | "married" | null;
+  /** true si la propuesta la hice yo y espero la respuesta */
+  proposedByMe: boolean;
   /** Nivel de MI árbol que le muestro (null = sin acceso) */
   grantedTier: TreePermissionTier | null;
   /** Nivel de SU árbol que me muestra (null = sin acceso) */

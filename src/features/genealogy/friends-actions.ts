@@ -17,6 +17,7 @@ import {
   isMissingTableError,
   MISSING_NAME_COLUMNS_MESSAGE,
   MISSING_SOCIAL_TABLE_MESSAGE,
+  PROFILE_TIER_MIGRATION,
 } from "./utils/db-errors";
 
 interface ServerActionResult {
@@ -507,10 +508,33 @@ export async function getFriendsAction(): Promise<{ friends: FriendItem[]; error
   const me = await getMyPersonId(supabase);
   if ("error" in me) return { friends: [] };
 
-  const { data: rows, error } = await supabase
+  const involvesMe = `person_a_id.eq.${me.personId},person_b_id.eq.${me.personId}`;
+  type ConnectionRow = {
+    id: string;
+    person_a_id: string;
+    person_b_id: string;
+    kind: SocialConnectionKind;
+    created_at: string;
+    proposed_union_type?: "partner" | "married" | null;
+    proposed_by_user_id?: string | null;
+  };
+  let rows: ConnectionRow[] | null = null;
+  const first = await supabase
     .from("social_connections")
-    .select("id, person_a_id, person_b_id, kind, created_at")
-    .or(`person_a_id.eq.${me.personId},person_b_id.eq.${me.personId}`);
+    .select("id, person_a_id, person_b_id, kind, created_at, proposed_union_type, proposed_by_user_id")
+    .or(involvesMe);
+  rows = first.data as ConnectionRow[] | null;
+  let error = first.error;
+
+  // Si la migración de propuestas aún no se ejecuta, se listan los amigos sin propuestas
+  if (error && isMissingColumnError(error)) {
+    const fallback = await supabase
+      .from("social_connections")
+      .select("id, person_a_id, person_b_id, kind, created_at")
+      .or(involvesMe);
+    rows = fallback.data as ConnectionRow[] | null;
+    error = fallback.error;
+  }
 
   if (error) {
     return { friends: [], error: isMissingTableError(error) ? MISSING_SOCIAL_TABLE_MESSAGE : error.message };
@@ -574,6 +598,8 @@ export async function getFriendsAction(): Promise<{ friends: FriendItem[]; error
       invitedEmail: token?.invited_email?.trim() || null,
       grantedTier: (granted?.tier as TreePermissionTier) ?? null,
       receivedTier: (received?.tier as TreePermissionTier) ?? null,
+      proposedUnionType: row.proposed_union_type ?? null,
+      proposedByMe: Boolean(row.proposed_union_type) && row.proposed_by_user_id === me.userId,
       createdByMe: p.created_by_user_id === me.userId,
       since: row.created_at,
     });
@@ -697,6 +723,12 @@ export async function updateFriendKindAction(
     .select("id");
 
   if (error) return { success: false, error: error.message };
+
+  // Cambiar el tipo cancela cualquier propuesta pendiente (la columna puede no existir aún)
+  await supabase
+    .from("social_connections")
+    .update({ proposed_union_type: null, proposed_by_user_id: null })
+    .eq("id", connectionId);
   if (!data || data.length === 0) return { success: false, error: "No se encontró el vínculo." };
 
   revalidatePath("/");
@@ -791,6 +823,13 @@ export async function setFriendTreeAccessAction(
       p_requester_user_id: friendUserId,
       p_tier: tier,
     });
+
+    if (rpcError && /invalid input value for enum/i.test(rpcError.message)) {
+      return {
+        success: false,
+        error: `Ese nivel aún no existe en la base de datos. Ejecuta ${PROFILE_TIER_MIGRATION} en el SQL Editor de Supabase.`,
+      };
+    }
 
     if (rpcError) {
       // Sin la función RPC solo se puede actualizar un acceso que ya exista

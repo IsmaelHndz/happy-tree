@@ -31,3 +31,9 @@ export function isMissingTableError(error: { code?: string; message?: string } |
 export const MISSING_SOCIAL_TABLE_MESSAGE =
   `La base de datos todavía no tiene la tabla de amigos. ` +
   `Ejecuta la migración ${SOCIAL_CONNECTIONS_MIGRATION} en el SQL Editor de Supabase y vuelve a intentarlo.`;
+
+export const PROFILE_TIER_MIGRATION = "supabase/migrations/20261005000001_tree_tier_profile_and_union_proposals.sql";
+
+export const MISSING_PROPOSAL_COLUMNS_MESSAGE =
+  `La base de datos todavía no tiene las propuestas de noviazgo formal. ` +
+  `Ejecuta la migración ${PROFILE_TIER_MIGRATION} en el SQL Editor de Supabase y vuelve a intentarlo.`;
