@@ -62,9 +62,11 @@ function segmentClass(active: boolean) {
 interface FriendsDirectoryProps {
   friends: FriendItem[];
   loadError?: string;
+  /** El Usuario Cero hace formales los noviazgos sin esperar la aceptación de la otra persona */
+  isUserZero?: boolean;
 }
 
-export function FriendsDirectory({ friends, loadError }: FriendsDirectoryProps) {
+export function FriendsDirectory({ friends, loadError, isUserZero = false }: FriendsDirectoryProps) {
   const router = useRouter();
   const [filter, setFilter] = useState<"all" | "friend" | "dating">("all");
   const [isAdding, setIsAdding] = useState(false);
@@ -315,7 +317,7 @@ export function FriendsDirectory({ friends, loadError }: FriendsDirectoryProps) 
                         <p className="text-[11px] text-neutral-300">
                           Pasará a ser pareja en tu árbol. La familia de {f.firstName} quedará conectada a la tuya y
                           podrán verse entre sí según los niveles de acceso.
-                          {f.isClaimed && ` Como ${f.firstName} tiene su propia cuenta, recibirá una propuesta y la unión se creará cuando la acepte.`}
+                          {f.isClaimed && !isUserZero && ` Como ${f.firstName} tiene su propia cuenta, recibirá una propuesta y la unión se creará cuando la acepte.`}
                         </p>
                         <div className="flex items-center gap-1.5">
                           {(

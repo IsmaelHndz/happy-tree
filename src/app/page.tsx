@@ -343,7 +343,7 @@ export default async function Home({ searchParams }: HomeProps) {
               </div>
 
               {showFriends ? (
-                <FriendsDirectory friends={friends} loadError={friendsError} />
+                <FriendsDirectory friends={friends} loadError={friendsError} isUserZero={userProfile?.isUserZero} />
               ) : (
                 <FamilyDirectory
                   members={familyMembers}

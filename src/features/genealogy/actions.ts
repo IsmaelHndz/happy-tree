@@ -1014,7 +1014,7 @@ async function applySocialToUnion(
  * queda conectada a la del usuario, como en cualquier matrimonio.
  * - Si la otra persona tiene su propia cuenta, se le envía una PROPUESTA que debe aceptar.
  * - Si no tiene cuenta (ficha sin reclamar), la unión se crea de inmediato.
- * - El Usuario Cero, si no es parte del vínculo, la crea de inmediato (soporte).
+ * - El Usuario Cero la crea siempre de inmediato (soporte: durante el desarrollo controla esas cuentas).
  */
 export async function convertSocialToUnionAction({
   connectionId,
@@ -1053,7 +1053,7 @@ export async function convertSocialToUnionAction({
     return { error: "Solo las dos personas del vínculo pueden hacerlo formal." };
   }
 
-  if (isParty) {
+  if (isParty && !profile?.is_user_zero) {
     const otherId = connection.person_a_id === myPersonId ? connection.person_b_id : connection.person_a_id;
     const { data: other } = await supabase
       .from("persons")
