@@ -57,6 +57,7 @@ export default async function Home({ searchParams }: HomeProps) {
   let familyMembers: FamilyMemberItem[] = [];
   let friends: FriendItem[] = [];
   let friendsError: string | undefined;
+  let inRelationship = false;
   const showFriends = params?.view === "amigos";
   let availableAnchors: { id: string; name: string }[] = [];
   let availablePerspectives: { id: string; name: string }[] = [];
@@ -154,6 +155,7 @@ export default async function Home({ searchParams }: HomeProps) {
     familyMembers = members;
     friends = friendsResult.friends;
     friendsError = friendsResult.error;
+    inRelationship = friendsResult.inRelationship;
 
     availableAnchors = profile?.person_id
       ? [
@@ -343,7 +345,12 @@ export default async function Home({ searchParams }: HomeProps) {
               </div>
 
               {showFriends ? (
-                <FriendsDirectory friends={friends} loadError={friendsError} isUserZero={userProfile?.isUserZero} />
+                <FriendsDirectory
+                  friends={friends}
+                  loadError={friendsError}
+                  isUserZero={userProfile?.isUserZero}
+                  inRelationship={inRelationship}
+                />
               ) : (
                 <FamilyDirectory
                   members={familyMembers}

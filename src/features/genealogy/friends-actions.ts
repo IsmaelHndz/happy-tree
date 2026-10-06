@@ -503,10 +503,10 @@ async function getMyPersonId(supabase: Awaited<ReturnType<typeof createClient>>)
  * Lista mis amigos y noviazgos con el estado de su cuenta, su invitación
  * y el nivel de árbol que nos compartimos en cada dirección.
  */
-export async function getFriendsAction(): Promise<{ friends: FriendItem[]; error?: string }> {
+export async function getFriendsAction(): Promise<{ friends: FriendItem[]; inRelationship: boolean; error?: string }> {
   const supabase = await createClient();
   const me = await getMyPersonId(supabase);
-  if ("error" in me) return { friends: [] };
+  if ("error" in me) return { friends: [], inRelationship: false };
 
   const involvesMe = `person_a_id.eq.${me.personId},person_b_id.eq.${me.personId}`;
   type ConnectionRow = {
@@ -537,16 +537,20 @@ export async function getFriendsAction(): Promise<{ friends: FriendItem[]; error
   }
 
   if (error) {
-    return { friends: [], error: isMissingTableError(error) ? MISSING_SOCIAL_TABLE_MESSAGE : error.message };
+    return {
+      friends: [],
+      inRelationship: false,
+      error: isMissingTableError(error) ? MISSING_SOCIAL_TABLE_MESSAGE : error.message,
+    };
   }
-  if (!rows || rows.length === 0) return { friends: [] };
+  if (!rows || rows.length === 0) return { friends: [], inRelationship: false };
 
   const otherIds = Array.from(
     new Set(rows.map((r) => otherParty(r, me.personId)).filter((id): id is string => Boolean(id)))
   );
 
   // select("*") para no fallar si las columnas de segundo nombre aún no existen
-  const [{ data: people }, { data: tokens }, { data: shares }] = await Promise.all([
+  const [{ data: people }, { data: tokens }, { data: shares }, { data: activeUnions }] = await Promise.all([
     supabase.from("persons").select("*").in("id", otherIds),
     supabase
       .from("invitation_tokens")
@@ -560,6 +564,14 @@ export async function getFriendsAction(): Promise<{ friends: FriendItem[]; error
       .select("granter_user_id, requester_user_id, tier, status")
       .or(`granter_user_id.eq.${me.userId},requester_user_id.eq.${me.userId}`)
       .eq("status", "approved"),
+    // Parejas vigentes en el árbol (no separados ni divorciados)
+    supabase
+      .from("union_edges")
+      .select("id")
+      .or(`person_a_id.eq.${me.personId},person_b_id.eq.${me.personId}`)
+      .neq("status", "rejected")
+      .not("union_type", "in", '("divorced","separated")')
+      .limit(1),
   ]);
 
   const friends: FriendItem[] = [];
@@ -607,6 +619,8 @@ export async function getFriendsAction(): Promise<{ friends: FriendItem[]; error
 
   // Noviazgo primero, luego por nombre
   return {
+    // En pareja: noviazgo registrado o unión vigente. La UI oculta la opción de empezar a salir con otros amigos.
+    inRelationship: rows.some((r) => r.kind === "dating") || (activeUnions?.length ?? 0) > 0,
     friends: friends.sort(
       (a, b) => Number(b.kind === "dating") - Number(a.kind === "dating") || a.firstName.localeCompare(b.firstName)
     ),
