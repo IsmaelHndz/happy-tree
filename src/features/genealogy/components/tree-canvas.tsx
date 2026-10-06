@@ -7,6 +7,7 @@ import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { TreeSearchModal } from "./tree-search-modal";
+import { buildSiblingGroups, parentGroupKey, staggerBusRows } from "../utils/sibling-groups";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -47,6 +48,11 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   // Toggle de control de complejidad: Ocultar parejas de hermanos por defecto
   const [hideSiblingSpouses, setHideSiblingSpouses] = useState(true);
 
+  // Familia resaltada (unión + sus hijos): hover en escritorio, toque fijado en móvil
+  const [hoveredGroupKey, setHoveredGroupKey] = useState<string | null>(null);
+  const [pinnedGroupKey, setPinnedGroupKey] = useState<string | null>(null);
+  const pointerDownAt = useRef({ x: 0, y: 0 });
+
   // Atajo de teclado global Cmd+K / Ctrl+K
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -77,7 +83,9 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
 
   // Eventos de arrastre del lienzo (Pan)
   const handleMouseDown = (e: React.MouseEvent) => {
+    pointerDownAt.current = { x: e.clientX, y: e.clientY };
     if (
+      (e.target as Element).closest(".union-heart") ||
       (e.target as HTMLElement).closest(".tree-node-card") ||
       (e.target as HTMLElement).closest(".tree-controls") ||
       (e.target as HTMLElement).closest("button") ||
@@ -103,6 +111,14 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
 
   const handleMouseUp = () => {
     setIsDragging(false);
+  };
+
+  // Un clic en el fondo (sin arrastrar) quita el resaltado fijado
+  const handleCanvasClick = (e: React.MouseEvent) => {
+    const target = e.target as Element;
+    if (target.closest(".tree-node-card, .union-heart, .tree-controls")) return;
+    const moved = Math.hypot(e.clientX - pointerDownAt.current.x, e.clientY - pointerDownAt.current.y);
+    if (moved < 5) setPinnedGroupKey(null);
   };
 
   // Zoom con la rueda del ratón
@@ -148,24 +164,64 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   // =========================================================================
   // AGRUPACIÓN PARA HORQUILLA GENEALÓGICA ENTRE HERMANOS (Pedigree Bus Bar)
   // =========================================================================
-  const childToParentsMap = new Map<string, string[]>();
-  graph.edges
-    .filter((e) => e.type === "parent-child")
-    .forEach((e) => {
-      if (nodeMap.has(e.targetId) && nodeMap.has(e.sourceId)) {
-        const pList = childToParentsMap.get(e.targetId) || [];
-        if (!pList.includes(e.sourceId)) pList.push(e.sourceId);
-        childToParentsMap.set(e.targetId, pList);
-      }
-    });
-
-  const parentGroupToChildrenMap = new Map<string, string[]>();
-  childToParentsMap.forEach((parents, childId) => {
-    const parentKey = parents.sort().join("_");
-    const cList = parentGroupToChildrenMap.get(parentKey) || [];
-    if (!cList.includes(childId)) cList.push(childId);
-    parentGroupToChildrenMap.set(parentKey, cList);
+  // Cada grupo de hijos cuelga de su unión; si alguien tiene hijos con varias
+  // parejas, cada grupo lleva su propio color y una etiqueta "con X".
+  const siblingGroups = buildSiblingGroups({
+    focusId: graph.focusPerson.id,
+    visibleIds: new Set(nodeMap.keys()),
+    parentEdges: graph.edges
+      .filter((e) => e.type === "parent-child")
+      .map((e) => ({ parentId: e.sourceId, childId: e.targetId })),
+    firstNameOf: (id) => nodeMap.get(id)?.firstName ?? "",
   });
+  const groupByKey = new Map(siblingGroups.map((g) => [g.key, g]));
+  const groupKeyOfChild = new Map<string, string>();
+  siblingGroups.forEach((g) => g.childIds.forEach((c) => groupKeyOfChild.set(c, g.key)));
+  const hasMultiPartnerGroups = siblingGroups.some((g) => g.isMultiPartner);
+
+  const visibleUnionEdges = graph.edges.filter(
+    (e) => e.type === "union" && nodeMap.has(e.sourceId) && nodeMap.has(e.targetId)
+  );
+  const unionPairKeys = new Set(visibleUnionEdges.map((e) => parentGroupKey([e.sourceId, e.targetId])));
+
+  // Resaltado: hover (escritorio) o toque fijado (móvil) sobre un corazón o un hijo.
+  const activeGroupKey = hoveredGroupKey ?? pinnedGroupKey;
+  const activeGroup = activeGroupKey ? groupByKey.get(activeGroupKey) ?? null : null;
+  const highlightedIds = activeGroup ? new Set([...activeGroup.parentIds, ...activeGroup.childIds]) : null;
+  const togglePinnedGroup = (key: string) => setPinnedGroupKey((prev) => (prev === key ? null : key));
+
+  const buses = staggerBusRows(
+    siblingGroups.flatMap((group) => {
+      const parents = group.parentIds.map((id) => nodeMap.get(id)!).filter((n) => n.x !== undefined);
+      const children = group.childIds.map((id) => nodeMap.get(id)!).filter((n) => n.x !== undefined);
+      if (parents.length === 0 || children.length === 0) return [];
+
+      const parentMidX =
+        parents.length >= 2
+          ? (parents[0].x! + parents[1].x! + NODE_WIDTH) / 2
+          : parents[0].x! + NODE_WIDTH / 2;
+      const parentMaxY = Math.max(...parents.map((p) => p.y!)) + NODE_HEIGHT;
+      // Con unión dibujada, la bajada nace justo debajo del corazón.
+      const startsAtHeart =
+        parents.length === 2 && parents[0].y === parents[1].y && unionPairKeys.has(group.key);
+      const dropStartY = startsAtHeart ? parents[0].y! + NODE_HEIGHT / 2 + 10 : parentMaxY;
+
+      const childY = Math.min(...children.map((c) => c.y!));
+      const busY = childY > parentMaxY ? parentMaxY + (childY - parentMaxY) / 2 : parentMaxY + 30;
+      const childXs = children.map((c) => c.x! + NODE_WIDTH / 2);
+      return [
+        {
+          group,
+          children,
+          parentMidX,
+          dropStartY,
+          busY,
+          busStartX: Math.min(...childXs, parentMidX),
+          busEndX: Math.max(...childXs, parentMidX),
+        },
+      ];
+    })
+  );
 
   const availableAnchors = graph.availableMembers
     .filter((m) => {
@@ -186,6 +242,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onClick={handleCanvasClick}
       onWheel={handleWheel}
       className={`relative w-full h-[780px] bg-neutral-950/90 border border-neutral-800 rounded-3xl overflow-hidden select-none cursor-grab active:cursor-grabbing ${
         isDragging ? "cursor-grabbing" : ""
@@ -291,220 +348,146 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       >
         {/* Capa de Aristas SVG */}
         <svg className="overflow-visible pointer-events-none absolute top-0 left-0">
-          <defs>
-            <linearGradient id="unionGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.8" />
-              <stop offset="100%" stopColor="#f472b6" stopOpacity="0.8" />
-            </linearGradient>
-          </defs>
-
-          {/* Renderizado de Horquillas Genealógicas (Padres -> Hermanos) */}
-          {Array.from(parentGroupToChildrenMap.entries()).map(([parentKey, childIds]) => {
-            const parents = parentKey
-              .split("_")
-              .map((pId) => nodeMap.get(pId))
-              .filter(Boolean) as TreeNodeData[];
-            const children = childIds
-              .map((cId) => nodeMap.get(cId))
-              .filter(Boolean) as TreeNodeData[];
-
-            if (parents.length === 0 || children.length === 0) return null;
-
-            // Punto de salida de los padres
-            let parentMidX = 0;
-            let parentMaxY = 0;
-            if (parents.length >= 2) {
-              parentMidX = (parents[0].x! + parents[1].x! + NODE_WIDTH) / 2;
-              parentMaxY = Math.max(parents[0].y!, parents[1].y!) + NODE_HEIGHT;
-            } else {
-              parentMidX = parents[0].x! + NODE_WIDTH / 2;
-              parentMaxY = parents[0].y! + NODE_HEIGHT;
-            }
-
-            const firstChild = children[0];
-            const busY =
-              firstChild.y! > parentMaxY
-                ? parentMaxY + (firstChild.y! - parentMaxY) / 2
-                : parentMaxY + 30;
-
-            const childXs = children.map((c) => c.x! + NODE_WIDTH / 2);
-            const minChildX = Math.min(...childXs);
-            const maxChildX = Math.max(...childXs);
-            const busStartX = Math.min(minChildX, parentMidX);
-            const busEndX = Math.max(maxChildX, parentMidX);
-
-            if (children.length === 1) {
-              const childX = firstChild.x! + NODE_WIDTH / 2;
-              const childY = firstChild.y!;
-
-              if (Math.abs(parentMidX - childX) < 2) {
-                // Perfectamente alineados: línea recta vertical continua
-                return (
-                  <line
-                    key={`pc-single-${parentKey}`}
-                    x1={parentMidX}
-                    y1={parentMaxY}
-                    x2={childX}
-                    y2={childY}
-                    stroke="#10b981"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  />
-                );
-              }
-
-              // Conexión ortogonal limpia e ininterrumpida
-              return (
-                <g key={`pc-single-${parentKey}`}>
-                  <line
-                    x1={parentMidX}
-                    y1={parentMaxY}
-                    x2={parentMidX}
-                    y2={busY}
-                    stroke="#10b981"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  />
-                  <circle cx={parentMidX} cy={busY} r="3" fill="#10b981" />
-                  <line
-                    x1={busStartX}
-                    y1={busY}
-                    x2={busEndX}
-                    y2={busY}
-                    stroke="#10b981"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  />
-                  <line
-                    x1={childX}
-                    y1={busY}
-                    x2={childX}
-                    y2={childY}
-                    stroke="#10b981"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  />
-                  <circle cx={childX} cy={busY} r="2.5" fill="#10b981" />
-                </g>
-              );
-            }
-
-            // Dos o más hijos (HERMANOS): Horquilla clásica con bus bar horizontal continuo
+          {/* Horquillas genealógicas: unión (corazón) -> barra de hermanos -> hijos */}
+          {buses.map(({ group, children, parentMidX, dropStartY, busY, busStartX, busEndX }) => {
+            const color = group.color;
+            const dimmed = activeGroupKey !== null && activeGroupKey !== group.key;
+            const labelWidth = group.label ? group.label.length * 6 + 16 : 0;
+            const labelY = (dropStartY + busY) / 2;
             return (
-              <g key={`pc-group-${parentKey}`}>
-                {/* Bajada vertical desde los padres hacia la barra de hermanos */}
+              <g
+                key={`pc-group-${group.key}`}
+                opacity={dimmed ? 0.15 : 1}
+                style={{ transition: "opacity 0.2s" }}
+              >
                 <line
                   x1={parentMidX}
-                  y1={parentMaxY}
+                  y1={dropStartY}
                   x2={parentMidX}
                   y2={busY}
-                  stroke="#10b981"
+                  stroke={color}
                   strokeWidth="2.5"
                   strokeLinecap="round"
                 />
-                <circle cx={parentMidX} cy={busY} r="3" fill="#10b981" />
-
-                {/* Barra horizontal continua que abarca el punto de bajada de los padres y a todos los hermanos */}
+                <circle cx={parentMidX} cy={busY} r="3" fill={color} />
                 <line
                   x1={busStartX}
                   y1={busY}
                   x2={busEndX}
                   y2={busY}
-                  stroke="#10b981"
+                  stroke={color}
                   strokeWidth="2.5"
                   strokeLinecap="round"
                 />
-
-                {/* Trazos verticales hacia cada hermano */}
                 {children.map((child) => {
                   const cX = child.x! + NODE_WIDTH / 2;
-                  const cY = child.y!;
                   return (
                     <g key={`stub-${child.id}`}>
                       <line
                         x1={cX}
                         y1={busY}
                         x2={cX}
-                        y2={cY}
-                        stroke="#10b981"
+                        y2={child.y!}
+                        stroke={color}
                         strokeWidth="2.5"
                         strokeLinecap="round"
                       />
-                      <circle cx={cX} cy={busY} r="2.5" fill="#10b981" />
+                      <circle cx={cX} cy={busY} r="2.5" fill={color} />
                     </g>
                   );
                 })}
+                {/* Etiqueta "con X" solo cuando alguien tiene hijos con varias parejas */}
+                {group.label && (
+                  <g>
+                    <rect
+                      x={parentMidX + 8}
+                      y={labelY - 10}
+                      width={labelWidth}
+                      height={20}
+                      rx={10}
+                      fill="#0a0a0a"
+                      stroke={color}
+                      strokeOpacity={0.6}
+                    />
+                    <text
+                      x={parentMidX + 8 + labelWidth / 2}
+                      y={labelY + 4}
+                      textAnchor="middle"
+                      fill={color}
+                      fontSize="11"
+                      fontWeight="500"
+                    >
+                      {group.label}
+                    </text>
+                  </g>
+                )}
               </g>
             );
           })}
 
-          {/* Renderizado de Aristas de Unión Conyugal */}
-          {graph.edges
-            .filter((e) => e.type === "union")
-            .map((edge) => {
-              const source = nodeMap.get(edge.sourceId);
-              const target = nodeMap.get(edge.targetId);
+          {/* Uniones conyugales: línea sólida tarjeta -> corazón -> tarjeta */}
+          {visibleUnionEdges.map((edge) => {
+            const source = nodeMap.get(edge.sourceId)!;
+            const target = nodeMap.get(edge.targetId)!;
+            if (source.x === undefined || target.x === undefined) return null;
 
-              if (!source || !target || source.x === undefined || target.x === undefined) {
-                return null;
-              }
+            const isLeft = source.x < target.x;
+            const x1 = isLeft ? source.x + NODE_WIDTH : source.x;
+            const y1 = source.y! + NODE_HEIGHT / 2;
+            const x2 = isLeft ? target.x : target.x + NODE_WIDTH;
+            const y2 = target.y! + NODE_HEIGHT / 2;
+            const midX = (x1 + x2) / 2;
 
-              const isLeft = source.x < target.x;
-              const x1 = isLeft ? source.x + NODE_WIDTH : source.x;
-              const y1 = source.y! + NODE_HEIGHT / 2;
-              const x2 = isLeft ? target.x : target.x + NODE_WIDTH;
-              const y2 = target.y! + NODE_HEIGHT / 2;
-              const midX = (x1 + x2) / 2;
+            const key = parentGroupKey([edge.sourceId, edge.targetId]);
+            const group = groupByKey.get(key);
+            const dimmed = activeGroupKey !== null && activeGroupKey !== key;
+            const isSeparatedOrDivorced = edge.unionType === "divorced" || edge.unionType === "separated";
+            const lineColor = isSeparatedOrDivorced ? "#71717a" : group?.color ?? "#f472b6";
 
-              const isSeparatedOrDivorced = edge.unionType === "divorced" || edge.unionType === "separated";
-
-              if (isSeparatedOrDivorced) {
-                // Vínculo conyugal disuelto o separado
-                return (
-                  <g key={edge.id}>
-                    <line
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke="#71717a"
-                      strokeWidth="2"
-                      strokeDasharray="4 4"
-                    />
-                    <circle cx={midX} cy={y1} r="9" fill="#18181b" stroke="#71717a" strokeWidth="1.5" />
-                    <text
-                      x={midX}
-                      y={y1 + 4}
-                      textAnchor="middle"
-                      fill="#ef4444"
-                      fontSize="12"
-                      fontWeight="bold"
-                    >
-                      ≠
-                    </text>
-                  </g>
-                );
-              }
-
-              return (
-                <g key={edge.id}>
-                  <line
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke="url(#unionGrad)"
-                    strokeWidth="2"
-                    strokeDasharray="4 4"
-                  />
-                  <circle cx={midX} cy={y1} r="9" fill="#0f172a" stroke="#ec4899" strokeWidth="1.5" />
-                  <path
-                    d={`M ${midX - 3.5} ${y1 - 1.5} a 2 2 0 0 1 3.5 -1.5 a 2 2 0 0 1 3.5 1.5 c 0 2 -3.5 4 -3.5 4 s -3.5 -2 -3.5 -4 z`}
-                    fill="#ec4899"
-                  />
+            return (
+              <g key={edge.id} opacity={dimmed ? 0.15 : 1} style={{ transition: "opacity 0.2s" }}>
+                <line
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={lineColor}
+                  strokeOpacity={isSeparatedOrDivorced ? 1 : 0.85}
+                  strokeWidth="2"
+                  strokeDasharray={isSeparatedOrDivorced ? "4 4" : undefined}
+                />
+                <g
+                  className={group ? "union-heart cursor-pointer" : undefined}
+                  style={group ? { pointerEvents: "all" } : undefined}
+                  role={group ? "button" : undefined}
+                  aria-label={group ? `Resaltar hijos de esta unión` : undefined}
+                  onMouseEnter={group ? () => setHoveredGroupKey(key) : undefined}
+                  onMouseLeave={group ? () => setHoveredGroupKey(null) : undefined}
+                  onClick={group ? () => togglePinnedGroup(key) : undefined}
+                >
+                  {isSeparatedOrDivorced ? (
+                    <>
+                      <circle cx={midX} cy={y1} r="10" fill="#18181b" stroke={group?.color ?? "#71717a"} strokeWidth="1.5" />
+                      <text x={midX} y={y1 + 4} textAnchor="middle" fill="#ef4444" fontSize="12" fontWeight="bold">
+                        ≠
+                      </text>
+                    </>
+                  ) : (
+                    <>
+                      <circle cx={midX} cy={y1} r="10" fill="#0f172a" stroke={group?.color ?? "#ec4899"} strokeWidth="1.5" />
+                      <path
+                        d={`M ${midX - 3.5} ${y1 - 1.5} a 2 2 0 0 1 3.5 -1.5 a 2 2 0 0 1 3.5 1.5 c 0 2 -3.5 4 -3.5 4 s -3.5 -2 -3.5 -4 z`}
+                        fill="#ec4899"
+                      />
+                    </>
+                  )}
+                  {pinnedGroupKey === key && (
+                    <circle cx={midX} cy={y1} r="14" fill="none" stroke={group?.color} strokeWidth="1.5" strokeOpacity="0.6" />
+                  )}
                 </g>
-              );
-            })}
+              </g>
+            );
+          })}
         </svg>
 
         {/* Capa de Nodos HTML */}
@@ -515,6 +498,11 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           const isFemale = node.gender === "female";
           const isMale = node.gender === "male";
           const initials = `${node.firstName[0] || ""}${node.lastName[0] || ""}`.toUpperCase();
+          const childGroupKey = groupKeyOfChild.get(node.id);
+          const childGroup = childGroupKey ? groupByKey.get(childGroupKey) : undefined;
+          // Solo los hijos de alguien con varias parejas activan el resaltado y llevan franja
+          const multiGroup = childGroup?.isMultiPartner ? childGroup : undefined;
+          const isDimmed = highlightedIds !== null && !highlightedIds.has(node.id);
 
           return (
             <div
@@ -526,7 +514,19 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                 width: `${NODE_WIDTH}px`,
                 height: `${NODE_HEIGHT}px`,
               }}
+              onMouseEnter={multiGroup ? () => setHoveredGroupKey(multiGroup.key) : undefined}
+              onMouseLeave={multiGroup ? () => setHoveredGroupKey(null) : undefined}
+              onClick={
+                multiGroup
+                  ? (e) => {
+                      if ((e.target as HTMLElement).closest("button, a")) return;
+                      togglePinnedGroup(multiGroup.key);
+                    }
+                  : undefined
+              }
               className={`tree-node-card group p-3 rounded-2xl border transition-all shadow-xl backdrop-blur-md flex flex-col justify-between cursor-default ${
+                isDimmed ? "opacity-20" : ""
+              } ${
                 isCenter
                   ? "bg-gradient-to-br from-emerald-950/90 to-neutral-900 border-emerald-500/80 shadow-emerald-950/50 ring-2 ring-emerald-500/30"
                   : isFemale
@@ -536,6 +536,14 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   : "bg-neutral-900/90 border-neutral-800 hover:border-neutral-700"
               }`}
             >
+              {multiGroup && (
+                <span
+                  aria-hidden
+                  className="absolute top-0 left-4 right-4 h-[3px] rounded-full"
+                  style={{ backgroundColor: multiGroup.color }}
+                />
+              )}
+
               {/* Encabezado del Nodo */}
               <div className="flex items-start justify-between gap-1.5">
                 <div className="flex items-center gap-2 overflow-hidden">
@@ -784,6 +792,15 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           <span className="w-2.5 h-1 bg-emerald-400 inline-block rounded" />
           <span>Horquilla de Hermanos</span>
         </div>
+        {hasMultiPartnerGroups && (
+          <div className="flex items-center gap-1.5">
+            <span className="flex gap-0.5">
+              <span className="w-2.5 h-1 bg-sky-400 inline-block rounded" />
+              <span className="w-2.5 h-1 bg-amber-400 inline-block rounded" />
+            </span>
+            <span>Hijos con otra pareja · toca un ♥ para resaltarlos</span>
+          </div>
+        )}
         <div className="flex items-center gap-1.5">
           <span className="text-red-400 font-bold">≠</span>
           <span>Separados / Divorciados</span>
