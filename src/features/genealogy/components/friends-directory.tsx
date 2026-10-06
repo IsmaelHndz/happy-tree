@@ -10,6 +10,7 @@ import {
   setFriendTreeAccessAction,
   updateFriendKindAction,
 } from "@/features/genealogy/friends-actions";
+import { convertSocialToUnionAction } from "@/features/genealogy/actions";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { formatFullName, type FriendItem, type TreePermissionTier, type UserSearchResultItem } from "../types";
@@ -257,6 +258,76 @@ export function FriendsDirectory({ friends, loadError }: FriendsDirectoryProps) 
                         className="w-full text-[11px] text-sky-300 hover:text-sky-200 bg-sky-950/40 hover:bg-sky-950/70 border border-sky-900/60 rounded-lg py-1.5 transition"
                       >
                         Terminamos · quedamos como amigos
+                      </button>
+                    ))}
+
+                  {isDating &&
+                    (pending === `f:${f.connectionId}` ? (
+                      <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800 space-y-2">
+                        <p className="text-[11px] text-neutral-300">
+                          Pasará a ser pareja en tu árbol. La familia de {f.firstName} quedará conectada a la tuya y
+                          podrán verse entre sí según los niveles de acceso.
+                        </p>
+                        <div className="flex items-center gap-1.5">
+                          {(
+                            [
+                              ["partner", "Unión libre"],
+                              ["married", "Casados"],
+                            ] as const
+                          ).map(([type, text]) => (
+                            <button
+                              key={type}
+                              onClick={() =>
+                                run(`f:${f.connectionId}`, async () => {
+                                  const res = await convertSocialToUnionAction({ connectionId: f.connectionId, unionType: type });
+                                  return res.error ? { success: false, error: res.error } : { success: true, message: res.message };
+                                })
+                              }
+                              disabled={busy === `f:${f.connectionId}`}
+                              className="flex-1 px-2 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-semibold flex items-center justify-center gap-1"
+                            >
+                              {busy === `f:${f.connectionId}` && <Loader2 className="w-3 h-3 animate-spin" />}
+                              {text}
+                            </button>
+                          ))}
+                          <button onClick={() => setPending(null)} className="px-2 py-1.5 text-[11px] text-neutral-400 hover:text-white">
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setPending(`f:${f.connectionId}`)}
+                        className="w-full text-[11px] text-emerald-300 hover:text-emerald-200 bg-emerald-950/30 hover:bg-emerald-950/60 border border-emerald-900/60 rounded-lg py-1.5 transition"
+                      >
+                        Hacerlo formal · unión libre o casados
+                      </button>
+                    ))}
+
+                  {!isDating &&
+                    (pending === `k:${f.connectionId}` ? (
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-neutral-300">
+                        <span>¿Empezaron a salir?</span>
+                        <span className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => run(`k:${f.connectionId}`, () => updateFriendKindAction(f.connectionId, "dating"))}
+                            disabled={busy === `k:${f.connectionId}`}
+                            className="px-2 py-1 rounded-lg bg-rose-800 hover:bg-rose-700 text-white font-semibold flex items-center gap-1"
+                          >
+                            {busy === `k:${f.connectionId}` && <Loader2 className="w-3 h-3 animate-spin" />}
+                            Sí
+                          </button>
+                          <button onClick={() => setPending(null)} className="text-neutral-400 hover:text-white px-1">
+                            No
+                          </button>
+                        </span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setPending(`k:${f.connectionId}`)}
+                        className="w-full text-[11px] text-rose-300 hover:text-rose-200 bg-rose-950/30 hover:bg-rose-950/60 border border-rose-900/60 rounded-lg py-1.5 transition"
+                      >
+                        Empezamos a salir · noviazgo
                       </button>
                     ))}
 

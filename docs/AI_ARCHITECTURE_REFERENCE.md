@@ -355,7 +355,8 @@ Two tabs, nothing else:
 1. "Agregar amigo" calls `createFriendAction` in `friends-actions.ts`: links an existing account (`existingPersonId`, found via `searchUsersForSharingAction`) or creates an unclaimed `persons` row plus the `social_connections` row (rolled back if the link fails). The invite reuses `InviteModal` with relationship `Amigo/Amiga/Novio/Novia`.
 2. "Terminamos · quedamos como amigos" calls `updateFriendKindAction(id, 'friend')`. "Quitar" calls `removeFriendAction`, which also deletes the person if it is unclaimed, was created by the user and has no other links.
 3. Once the friend has an account, "Qué ve de tu árbol" calls `setFriendTreeAccessAction(personId, tier | 'none')`.
-4. A dating relationship that was registered as a union (shows up as "Ex-pareja (Separados)"): the directory card offers "¿Fue un noviazgo? Pasar a amistad" → `convertUnionToSocialAction`. Only the two people or User Zero can do it. The union is deleted unless they share children.
+4. "Empezamos a salir" (`updateFriendKindAction(id, 'dating')`) and "Hacerlo formal · unión libre o casados" (`convertSocialToUnionAction`): the latter creates the `union_edges` row (validated with `classifyUnionIssue`), deletes the social row and thereby merges both families. Either person (or User Zero) can do it; no confirmation from the other party exists yet.
+5. A dating relationship that was registered as a union (shows up as "Ex-pareja (Separados)"): the directory card offers "¿Fue un noviazgo? Pasar a amistad" → `convertUnionToSocialAction`. Only the two people or User Zero can do it. The union is deleted unless they share children.
 
 ### Adding a new access tier for friend sharing
 1. Update `TreePermissionTier` union in `src/features/genealogy/types.ts`.

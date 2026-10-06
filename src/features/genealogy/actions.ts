@@ -12,6 +12,7 @@ import {
   MISSING_SOCIAL_TABLE_MESSAGE,
 } from "./utils/db-errors";
 import { socialOnlyPersonIds, type SocialConnectionKind } from "./utils/social-connections";
+import { classifyUnionIssue } from "./utils/graph-integrity";
 import { planLink, LINK_RELATION_LABELS, type LinkPlan, type LinkRelation, type PlannerPerson } from "./utils/link-planner";
 import crypto from "crypto";
 
@@ -952,6 +953,91 @@ export async function dissolveUnionAction({
   revalidatePath("/tree");
 
   return { success: true, hasSharedChildren: false, message: "Vínculo de pareja eliminado." };
+}
+
+/**
+ * Server Action: Hacer formal un noviazgo. El vínculo social pasa a ser una unión del árbol
+ * (unión libre o casados) y la familia de la otra persona queda conectada a la del usuario,
+ * como en cualquier matrimonio. Lo pueden hacer las dos personas del vínculo (o el Usuario Cero).
+ */
+export async function convertSocialToUnionAction({
+  connectionId,
+  unionType,
+}: {
+  connectionId: string;
+  unionType: "partner" | "married";
+}) {
+  if (unionType !== "partner" && unionType !== "married") return { error: "Tipo de unión no válido." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Debes estar autenticado para realizar esta acción." };
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  const { data: connection, error: connectionError } = await supabase
+    .from("social_connections")
+    .select("id, person_a_id, person_b_id")
+    .eq("id", connectionId)
+    .maybeSingle();
+  if (connectionError) {
+    return { error: isMissingTableError(connectionError) ? MISSING_SOCIAL_TABLE_MESSAGE : connectionError.message };
+  }
+  if (!connection) return { error: "No se encontró el vínculo." };
+
+  const isParty = Boolean(profile?.person_id) && [connection.person_a_id, connection.person_b_id].includes(profile!.person_id!);
+  if (!isParty && !profile?.is_user_zero) {
+    return { error: "Solo las dos personas del vínculo pueden hacerlo formal." };
+  }
+
+  // No contradecir la biología (padres, hijos, hermanos): lo mismo que validan los triggers
+  const { data: parentEdges } = await supabase
+    .from("parent_child_edges")
+    .select("parent_id, child_id, relationship_type")
+    .neq("status", "rejected");
+  const issue = classifyUnionIssue(
+    connection.person_a_id,
+    connection.person_b_id,
+    (parentEdges ?? []).filter((e) => e.relationship_type !== "step")
+  );
+  if (issue) return { error: "No se puede crear una pareja entre familiares directos o consanguíneos." };
+
+  const existingUnionIds = await findUnionIds(supabase, connection.person_a_id, connection.person_b_id);
+  if (existingUnionIds.length > 0) {
+    const { error } = await supabase
+      .from("union_edges")
+      .update({ union_type: unionType, updated_at: new Date().toISOString() })
+      .in("id", existingUnionIds);
+    if (error) return { error: `No se pudo actualizar la unión: ${error.message}` };
+  } else {
+    const { error } = await supabase.from("union_edges").insert({
+      person_a_id: connection.person_a_id,
+      person_b_id: connection.person_b_id,
+      union_type: unionType,
+      status: "confirmed",
+      created_by_user_id: user.id,
+    });
+    if (error) return { error: `No se pudo crear la unión: ${error.message}` };
+  }
+
+  // La unión ya es el vínculo: quitar el social para no duplicarlo en Amigos
+  const { error: deleteError } = await supabase.from("social_connections").delete().eq("id", connectionId);
+  if (deleteError) {
+    return { error: `La unión se creó, pero no se pudo quitar de Amigos: ${deleteError.message}` };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+  return {
+    success: true,
+    message: `Listo: ahora son ${unionType === "married" ? "pareja casada" : "pareja en unión libre"} y aparecen juntos en el árbol y el directorio familiar.`,
+  };
 }
 
 /**
