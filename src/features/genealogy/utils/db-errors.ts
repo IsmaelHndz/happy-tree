@@ -18,3 +18,16 @@ export function isMissingColumnError(error: { code?: string; message?: string } 
 export const MISSING_NAME_COLUMNS_MESSAGE =
   `La base de datos no tiene las columnas de segundo nombre / apellido materno. ` +
   `Ejecuta la migración ${NAME_COLUMNS_MIGRATION} en el SQL Editor de Supabase y vuelve a intentarlo.`;
+
+export const SOCIAL_CONNECTIONS_MIGRATION = "supabase/migrations/20261005000000_social_connections.sql";
+
+/** true si la tabla consultada no existe (la migración correspondiente aún no se ejecuta). */
+export function isMissingTableError(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  if (error.code === "42P01" || error.code === "PGRST205") return true;
+  return /relation .* does not exist|could not find the table/i.test(error.message ?? "");
+}
+
+export const MISSING_SOCIAL_TABLE_MESSAGE =
+  `La base de datos todavía no tiene la tabla de amigos. ` +
+  `Ejecuta la migración ${SOCIAL_CONNECTIONS_MIGRATION} en el SQL Editor de Supabase y vuelve a intentarlo.`;

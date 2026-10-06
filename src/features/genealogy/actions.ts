@@ -5,7 +5,13 @@ import { revalidatePath } from "next/cache";
 import { formatFullName, type FamilyMemberItem, type FamilyRelationshipType } from "./types";
 import type { Gender, UnionType } from "@/types/database.types";
 import { inferKinship, getConnectedFamilyIds } from "./utils/kinship-inference";
-import { isMissingColumnError, MISSING_NAME_COLUMNS_MESSAGE } from "./utils/db-errors";
+import {
+  isMissingColumnError,
+  isMissingTableError,
+  MISSING_NAME_COLUMNS_MESSAGE,
+  MISSING_SOCIAL_TABLE_MESSAGE,
+} from "./utils/db-errors";
+import { socialOnlyPersonIds, type SocialConnectionKind } from "./utils/social-connections";
 import { planLink, LINK_RELATION_LABELS, type LinkPlan, type LinkRelation, type PlannerPerson } from "./utils/link-planner";
 import crypto from "crypto";
 
@@ -80,6 +86,26 @@ async function getActivePartnerIds(supabase: SupabaseServerClient, personId: str
 }
 
 /**
+ * Uniones que cuentan como familia: no rechazadas, y las exparejas solo si comparten hijos.
+ */
+function treeVisibleUnionsOf<U extends { person_a_id: string; person_b_id: string; union_type: string; status?: string | null }>(
+  unions: U[],
+  parentEdges: { parent_id: string; child_id: string }[]
+): U[] {
+  const hasSharedChildren = (personA: string, personB: string): boolean => {
+    const kidsA = parentEdges.filter((e) => e.parent_id === personA).map((e) => e.child_id);
+    return parentEdges.some((e) => e.parent_id === personB && kidsA.includes(e.child_id));
+  };
+  return unions.filter((u) => {
+    if (u.status === "rejected") return false;
+    if (u.union_type === "separated" || u.union_type === "divorced") {
+      return hasSharedChildren(u.person_a_id, u.person_b_id);
+    }
+    return true;
+  });
+}
+
+/**
  * Componente conectado de la familia del usuario (mismas reglas de visibilidad que el árbol)
  * más los titulares de árboles compartidos aprobados.
  */
@@ -96,21 +122,11 @@ async function getUserFamilyScope(
     .from("union_edges")
     .select("person_a_id, person_b_id, union_type, status");
 
-  const hasSharedChildren = (personA: string, personB: string): boolean => {
-    const kidsA = allParentEdges?.filter((e) => e.parent_id === personA).map((e) => e.child_id) ?? [];
-    const kidsB = allParentEdges?.filter((e) => e.parent_id === personB).map((e) => e.child_id) ?? [];
-    return kidsA.some((id) => kidsB.includes(id));
-  };
-
-  const treeVisibleUnions = (allUnions || []).filter((u) => {
-    if (u.status === "rejected") return false;
-    if (u.union_type === "separated" || u.union_type === "divorced") {
-      return hasSharedChildren(u.person_a_id, u.person_b_id);
-    }
-    return true;
-  });
-
-  const familySet = getConnectedFamilyIds(userPersonId, allParentEdges || [], treeVisibleUnions);
+  const familySet = getConnectedFamilyIds(
+    userPersonId,
+    allParentEdges || [],
+    treeVisibleUnionsOf(allUnions || [], allParentEdges || [])
+  );
 
   try {
     const { data: shares } = await supabase
@@ -213,10 +229,29 @@ export async function getFamilyMembers(perspectivePersonId?: string): Promise<Fa
 
   const createdIds = createdPersons?.map((p) => p.id) ?? [];
 
+  // 4b. Amigos y noviazgos (social_connections) no son familia: salen del directorio
+  //     salvo que además tengan parentesco (p. ej. un primo que también es amigo).
+  let socialOnlyIds = new Set<string>();
+  const { data: socialRows } = await supabase
+    .from("social_connections")
+    .select("person_a_id, person_b_id")
+    .or(`person_a_id.eq.${currentPersonId},person_b_id.eq.${currentPersonId}`);
+  if (socialRows && socialRows.length > 0) {
+    const { data: everyUnion } = await supabase
+      .from("union_edges")
+      .select("person_a_id, person_b_id, union_type, status");
+    const familyIds = getConnectedFamilyIds(
+      currentPersonId,
+      allParentEdges ?? [],
+      treeVisibleUnionsOf(everyUnion ?? [], allParentEdges ?? [])
+    );
+    socialOnlyIds = socialOnlyPersonIds({ personId: currentPersonId, connections: socialRows, familyIds });
+  }
+
   // Unificar IDs de familiares
   const allFamilyIds = Array.from(
     new Set([...parentIds, ...childIds, ...siblingIds, ...spouseIds, ...createdIds])
-  );
+  ).filter((id) => !socialOnlyIds.has(id));
 
   if (allFamilyIds.length === 0) return [];
 
@@ -397,7 +432,7 @@ export async function createFamilyMemberAction(formData: FormData) {
 
   // REGLA ESTRICTA DE PRIVACIDAD Y SEGURIDAD:
   // Si se solicita anclar a un perfil distinto al del usuario actual, verificar que no sea una ficha reclamada por otro usuario.
-  if (requestedAnchorId && requestedAnchorId !== profile.person_id) {
+  if (requestedAnchorId && requestedAnchorId !== profile.person_id && !profile.is_user_zero) {
     const { data: anchorPerson } = await supabase
       .from("persons")
       .select("id, is_claimed, first_name, last_name")
@@ -708,14 +743,14 @@ export async function updateFamilyMemberAction(formData: FormData) {
   }
 
   // Control de permisos estricto:
-  // 1. Si la ficha está reclamada, ÚNICAMENTE su titular puede modificar su información personal.
+  // 1. Si la ficha está reclamada, ÚNICAMENTE su titular (o el Usuario Cero, para soporte) puede modificarla.
   // 2. Si la ficha NO está reclamada, cualquier miembro activo de la red familiar o el creador puede editarla.
   const isUserZero = profile?.is_user_zero ?? false;
   const isClaimedOwner = targetPerson.is_claimed && targetPerson.claimed_by_user_id === user.id;
   const isClaimedMember = Boolean(profile?.person_id);
   const isUnclaimed = !targetPerson.is_claimed;
 
-  if (targetPerson.is_claimed && !isClaimedOwner) {
+  if (targetPerson.is_claimed && !isClaimedOwner && !isUserZero) {
     return {
       error: "Esta ficha pertenece a la cuenta personal de otro familiar y solo su titular puede modificarla.",
     };
@@ -919,6 +954,103 @@ export async function dissolveUnionAction({
   return { success: true, hasSharedChildren: false, message: "Vínculo de pareja eliminado." };
 }
 
+/**
+ * Server Action: Convertir una unión de pareja en un vínculo social (amistad o noviazgo).
+ * Para noviazgos que terminaron en amistad o que nunca fueron matrimonio ni unión libre:
+ * la unión sale del árbol y del directorio familiar y la persona pasa a la vista de Amigos.
+ * Solo lo pueden hacer las dos personas de la pareja (o el Usuario Cero).
+ * Si comparten hijos, la unión se conserva para que los hijos sigan dibujándose bajo ambos.
+ */
+export async function convertUnionToSocialAction({
+  personAId,
+  personBId,
+  kind,
+}: {
+  personAId: string;
+  personBId: string;
+  kind: SocialConnectionKind;
+}) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Debes estar autenticado para realizar esta acción." };
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_user_zero, person_id")
+    .eq("id", user.id)
+    .single();
+
+  const isOwnRelationship = Boolean(profile?.person_id) && [personAId, personBId].includes(profile!.person_id!);
+  if (!isOwnRelationship && !profile?.is_user_zero) {
+    return { error: "Solo las dos personas de la pareja pueden convertir su vínculo en amistad." };
+  }
+
+  const unionIds = await findUnionIds(supabase, personAId, personBId);
+  if (unionIds.length === 0) {
+    return { error: "No se encontró el vínculo de pareja entre estas dos personas." };
+  }
+
+  // 1. Registrar primero el vínculo social: si la tabla no existe, la unión queda intacta
+  const { data: existing, error: lookupError } = await supabase
+    .from("social_connections")
+    .select("id")
+    .or(
+      `and(person_a_id.eq.${personAId},person_b_id.eq.${personBId}),and(person_a_id.eq.${personBId},person_b_id.eq.${personAId})`
+    )
+    .maybeSingle();
+  if (lookupError) {
+    return { error: isMissingTableError(lookupError) ? MISSING_SOCIAL_TABLE_MESSAGE : lookupError.message };
+  }
+
+  const { error: socialError } = existing
+    ? await supabase
+        .from("social_connections")
+        .update({ kind, updated_at: new Date().toISOString() })
+        .eq("id", existing.id)
+    : await supabase.from("social_connections").insert({
+        person_a_id: personAId,
+        person_b_id: personBId,
+        kind,
+        created_by_user_id: user.id,
+      });
+  if (socialError) {
+    return { error: `No se pudo registrar el vínculo: ${socialError.message}` };
+  }
+
+  const kindLabel = kind === "friend" ? "amistad" : "noviazgo";
+
+  // 2. Quitar la unión del árbol, salvo que tengan hijos en común
+  const [{ data: childrenA }, { data: childrenB }] = await Promise.all([
+    supabase.from("parent_child_edges").select("child_id").neq("status", "rejected").eq("parent_id", personAId),
+    supabase.from("parent_child_edges").select("child_id").neq("status", "rejected").eq("parent_id", personBId),
+  ]);
+  const childIdsA = new Set(childrenA?.map((c) => c.child_id) ?? []);
+  const hasSharedChildren = (childrenB ?? []).some((c) => childIdsA.has(c.child_id));
+
+  if (!hasSharedChildren) {
+    const { error: deleteError } = await supabase.from("union_edges").delete().in("id", unionIds);
+    if (deleteError) {
+      const { error } = await supabase
+        .from("union_edges")
+        .update({ status: "rejected", updated_at: new Date().toISOString() })
+        .in("id", unionIds);
+      if (error) return { error: `Se registró la ${kindLabel}, pero no se pudo quitar la unión: ${error.message}` };
+    }
+  }
+
+  revalidatePath("/");
+  revalidatePath("/tree");
+
+  return {
+    success: true,
+    message: hasSharedChildren
+      ? `Quedó registrada la ${kindLabel}. Como tienen hijos en común, siguen apareciendo juntos en el árbol como sus padres.`
+      : `Listo: ahora aparece en Amigos como ${kindLabel} y ya no como pareja en el árbol.`,
+  };
+}
+
 export interface AnchorRelative {
   id: string;
   name: string;
@@ -1100,7 +1232,7 @@ async function loadLinkPlanInput(
           maternalLastName: p.maternal_last_name,
         }),
         gender: p.gender,
-        lockedByOther: Boolean(p.is_claimed && p.claimed_by_user_id !== user.id),
+        lockedByOther: !profile?.is_user_zero && Boolean(p.is_claimed && p.claimed_by_user_id !== user.id),
       },
     ])
   );
@@ -1275,7 +1407,8 @@ export async function getMemberRelationsAction(personId: string): Promise<Member
   };
 
   const self = people?.find((p) => p.id === personId);
-  const lockedByOther = Boolean(self?.is_claimed && self.claimed_by_user_id !== user.id);
+  // El Usuario Cero puede corregir relaciones de fichas reclamadas (soporte durante el desarrollo)
+  const lockedByOther = !profile?.is_user_zero && Boolean(self?.is_claimed && self.claimed_by_user_id !== user.id);
 
   return {
     parents: (parentEdges ?? [])

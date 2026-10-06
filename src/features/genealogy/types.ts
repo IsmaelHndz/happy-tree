@@ -183,3 +183,36 @@ export interface UserSearchResultItem {
   existingTier?: TreePermissionTier | null;
 }
 
+
+/**
+ * Amigo o noviazgo (social_connections) visto desde el usuario actual.
+ * No es parentesco: nunca aparece en el árbol ni en el directorio familiar.
+ */
+export interface FriendItem {
+  connectionId: string;
+  kind: "friend" | "dating";
+  personId: string;
+  firstName: string;
+  middleName?: string | null;
+  lastName: string;
+  maternalLastName?: string | null;
+  maidenName?: string | null;
+  gender: Gender;
+  birthDate: string | null;
+  deathDate: string | null;
+  isLiving: boolean;
+  birthPlace: string | null;
+  bio: string | null;
+  isClaimed: boolean;
+  /** Cuenta del amigo, solo si ya reclamó su ficha */
+  friendUserId: string | null;
+  invitationToken: string | null;
+  invitedEmail: string | null;
+  /** Nivel de MI árbol que le muestro (null = sin acceso) */
+  grantedTier: TreePermissionTier | null;
+  /** Nivel de SU árbol que me muestra (null = sin acceso) */
+  receivedTier: TreePermissionTier | null;
+  /** true si yo creé su ficha y puedo corregir sus datos */
+  createdByMe: boolean;
+  since: string;
+}

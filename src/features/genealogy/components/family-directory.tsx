@@ -8,6 +8,7 @@ import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { EndorsementsManagerModal } from "@/features/genealogy/components/endorsements-manager-modal";
+import { convertUnionToSocialAction } from "@/features/genealogy/actions";
 import {
   Users,
   ShieldCheck,
@@ -16,7 +17,13 @@ import {
   Pencil,
   UserPlus,
   Cake,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
+
+// Uniones que pueden pasar a ser amistad o noviazgo (no matrimonios vigentes)
+const CONVERTIBLE_UNIONS = new Set(["partner", "separated", "divorced"]);
 
 interface FamilyDirectoryProps {
   members: FamilyMemberItem[];
@@ -36,6 +43,26 @@ export function FamilyDirectory({
   const [activeInviteMember, setActiveInviteMember] = useState<FamilyMemberItem | null>(null);
   const [activeEditMember, setActiveEditMember] = useState<FamilyMemberItem | null>(null);
   const [activeAddAnchor, setActiveAddAnchor] = useState<FamilyMemberItem | null>(null);
+  const [convertingId, setConvertingId] = useState<string | null>(null);
+  const [convertBusy, setConvertBusy] = useState(false);
+  const [convertResult, setConvertResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const convertToSocial = async (member: FamilyMemberItem, kind: "friend" | "dating") => {
+    if (!member.unionInfo) return;
+    setConvertBusy(true);
+    const res = await convertUnionToSocialAction({
+      personAId: member.unionInfo.partnerId,
+      personBId: member.id,
+      kind,
+    });
+    setConvertBusy(false);
+    setConvertingId(null);
+    if (res.error) setConvertResult({ ok: false, text: res.error });
+    else {
+      setConvertResult({ ok: true, text: res.message ?? "Listo." });
+      router.refresh();
+    }
+  };
 
   const filteredMembers = members.filter((m) => {
     if (filter === "parents") return m.relationshipCategory === "parent";
@@ -134,6 +161,23 @@ export function FamilyDirectory({
           )}
         </div>
       </div>
+
+      {convertResult && (
+        <div
+          className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+            convertResult.ok
+              ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-200"
+              : "bg-red-950/40 border-red-800/60 text-red-200"
+          }`}
+        >
+          {convertResult.ok ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+          ) : (
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+          )}
+          <span>{convertResult.text}</span>
+        </div>
+      )}
 
       {/* Grid de Miembros */}
       {filteredMembers.length === 0 ? (
@@ -236,6 +280,52 @@ export function FamilyDirectory({
                   </div>
                 </div>
 
+                {/* Noviazgo terminado registrado como pareja: pasarlo a Amigos */}
+                {member.unionInfo && CONVERTIBLE_UNIONS.has(member.unionInfo.unionType) && (
+                  <div className="mb-3">
+                    {convertingId === member.id ? (
+                      <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800 space-y-2">
+                        <p className="text-[11px] text-neutral-300">
+                          ¿Qué son ahora? Deja de aparecer como pareja en el árbol y pasa a tu lista de Amigos.
+                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => convertToSocial(member, "friend")}
+                            disabled={convertBusy}
+                            className="flex-1 px-2 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-[11px] font-semibold flex items-center justify-center gap-1"
+                          >
+                            {convertBusy && <Loader2 className="w-3 h-3 animate-spin" />}
+                            Amigos
+                          </button>
+                          <button
+                            onClick={() => convertToSocial(member, "dating")}
+                            disabled={convertBusy}
+                            className="flex-1 px-2 py-1.5 rounded-lg bg-rose-800 hover:bg-rose-700 text-white text-[11px] font-semibold"
+                          >
+                            Novios
+                          </button>
+                          <button
+                            onClick={() => setConvertingId(null)}
+                            className="px-2 py-1.5 text-[11px] text-neutral-400 hover:text-white"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setConvertResult(null);
+                          setConvertingId(member.id);
+                        }}
+                        className="text-[11px] text-sky-300 hover:text-sky-200"
+                      >
+                        ¿Fue un noviazgo? Pasar a amistad
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {/* Acciones & Edad Actual */}
                 <div className="pt-3 border-t border-neutral-800/60 flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
                   <div className="flex items-center gap-1.5 text-xs text-neutral-400 font-medium shrink-0">
@@ -254,7 +344,7 @@ export function FamilyDirectory({
 
                   <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                     {/* Botón para agregar familiares anclados a esta persona (Bloqueado para fichas de otros usuarios verificados) */}
-                    {(!member.isClaimed || member.relationshipCategory === "self" || (currentPerspectiveId && member.id === currentPerspectiveId)) && (
+                    {(!member.isClaimed || isUserZero || member.relationshipCategory === "self" || (currentPerspectiveId && member.id === currentPerspectiveId)) && (
                       <button
                         onClick={() => setActiveAddAnchor(member)}
                         title={`Añadir pariente respecto a ${member.firstName}`}
@@ -265,8 +355,8 @@ export function FamilyDirectory({
                       </button>
                     )}
 
-                    {/* Solo se puede editar si la ficha NO ha sido reclamada */}
-                    {!member.isClaimed && (
+                    {/* Solo se puede editar si la ficha NO ha sido reclamada (el Usuario Cero siempre puede, para soporte) */}
+                    {(!member.isClaimed || isUserZero) && (
                       <button
                         onClick={() => setActiveEditMember(member)}
                         title="Editar ficha"
@@ -302,7 +392,7 @@ export function FamilyDirectory({
           defaultAnchorId={activeAddAnchor.id}
           defaultAnchorName={formatFullName(activeAddAnchor)}
           availableAnchors={members
-            .filter((m) => !m.isClaimed || m.relationshipCategory === "self" || (currentPerspectiveId && m.id === currentPerspectiveId))
+            .filter((m) => !m.isClaimed || isUserZero || m.relationshipCategory === "self" || (currentPerspectiveId && m.id === currentPerspectiveId))
             .map((m) => ({ id: m.id, name: formatFullName(m) }))}
           isOpen={Boolean(activeAddAnchor)}
           onClose={() => setActiveAddAnchor(null)}

@@ -6,9 +6,11 @@ import { getFamilyMembers } from "@/features/genealogy/actions";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { LinkMembersModal } from "@/features/genealogy/components/link-members-modal";
 import { FamilyDirectory } from "@/features/genealogy/components/family-directory";
+import { FriendsDirectory } from "@/features/genealogy/components/friends-directory";
+import { getFriendsAction } from "@/features/genealogy/friends-actions";
 import { FriendsManagerModal } from "@/features/genealogy/components/friends-manager-modal";
 import { EndorsementsManagerModal } from "@/features/genealogy/components/endorsements-manager-modal";
-import { formatFullName, type FamilyMemberItem } from "@/features/genealogy/types";
+import { formatFullName, type FamilyMemberItem, type FriendItem } from "@/features/genealogy/types";
 import {
   GitFork,
   Shield,
@@ -24,7 +26,7 @@ import {
 export const dynamic = "force-dynamic";
 
 interface HomeProps {
-  searchParams?: Promise<{ unauthorized?: string; error?: string; code?: string; perspective?: string }>;
+  searchParams?: Promise<{ unauthorized?: string; error?: string; code?: string; perspective?: string; view?: string }>;
 }
 
 export default async function Home({ searchParams }: HomeProps) {
@@ -53,6 +55,9 @@ export default async function Home({ searchParams }: HomeProps) {
   } | null = null;
 
   let familyMembers: FamilyMemberItem[] = [];
+  let friends: FriendItem[] = [];
+  let friendsError: string | undefined;
+  const showFriends = params?.view === "amigos";
   let availableAnchors: { id: string; name: string }[] = [];
   let availablePerspectives: { id: string; name: string }[] = [];
   let userPersonId: string | null = null;
@@ -145,7 +150,10 @@ export default async function Home({ searchParams }: HomeProps) {
       }
     }
 
-    familyMembers = await getFamilyMembers(params?.perspective);
+    const [members, friendsResult] = await Promise.all([getFamilyMembers(params?.perspective), getFriendsAction()]);
+    familyMembers = members;
+    friends = friendsResult.friends;
+    friendsError = friendsResult.error;
 
     availableAnchors = profile?.person_id
       ? [
@@ -301,28 +309,49 @@ export default async function Home({ searchParams }: HomeProps) {
               </div>
             </div>
 
-            {/* Directorio de Familiares */}
+            {/* Directorio: Familia (parentesco) y Amigos (vínculos sociales, fuera del árbol) */}
             <div className="bg-neutral-900/50 border border-neutral-800/80 rounded-3xl p-6 sm:p-8">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
                 <div>
                   <h2 className="text-lg font-bold text-white">
-                    Directorio Familiar & Fichas Genealógicas
+                    {showFriends ? "Amigos y Noviazgos" : "Directorio Familiar & Fichas Genealógicas"}
                   </h2>
                   <p className="text-xs text-neutral-400">
-                    Nodos en tu rama genealógica vinculados por filiaciones de parentesco o uniones conyugales.
+                    {showFriends
+                      ? "Personas cercanas que no son familia: no aparecen en tu árbol y solo ven lo que tú les compartas."
+                      : "Nodos en tu rama genealógica vinculados por filiaciones de parentesco o uniones conyugales."}
                   </p>
                 </div>
-                <div className="text-xs font-mono text-neutral-400 bg-neutral-950 px-3 py-1.5 rounded-xl border border-neutral-800">
-                  Total familiares: {familyMembers.length}
+                <div className="flex gap-1 p-1 rounded-xl bg-neutral-950 border border-neutral-800 text-xs font-semibold shrink-0">
+                  <Link
+                    href={params?.perspective ? `/?perspective=${params.perspective}` : "/"}
+                    className={`px-3 py-1.5 rounded-lg transition ${
+                      showFriends ? "text-neutral-400 hover:text-white" : "bg-neutral-800 text-white"
+                    }`}
+                  >
+                    Familia ({familyMembers.length})
+                  </Link>
+                  <Link
+                    href="/?view=amigos"
+                    className={`px-3 py-1.5 rounded-lg transition ${
+                      showFriends ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"
+                    }`}
+                  >
+                    Amigos ({friends.length})
+                  </Link>
                 </div>
               </div>
 
-              <FamilyDirectory
-                members={familyMembers}
-                isUserZero={userProfile?.isUserZero}
-                currentPerspectiveId={params?.perspective || userPersonId || undefined}
-                availablePerspectives={availablePerspectives}
-              />
+              {showFriends ? (
+                <FriendsDirectory friends={friends} loadError={friendsError} />
+              ) : (
+                <FamilyDirectory
+                  members={familyMembers}
+                  isUserZero={userProfile?.isUserZero}
+                  currentPerspectiveId={params?.perspective || userPersonId || undefined}
+                  availablePerspectives={availablePerspectives}
+                />
+              )}
             </div>
           </div>
         ) : (

@@ -13,6 +13,7 @@ export type EdgeStatus = "pending_confirmation" | "confirmed" | "rejected";
 export type InvitationStatus = "pending" | "accepted" | "expired" | "revoked";
 export type TreePermissionTier = "basic" | "intermediate" | "advanced";
 export type TreeAccessStatus = "pending" | "approved" | "rejected" | "revoked";
+export type SocialConnectionKind = "friend" | "dating";
 
 export interface Database {
   public: {
@@ -290,6 +291,36 @@ export interface Database {
         };
         Relationships: [];
       };
+      social_connections: {
+        Row: {
+          id: string;
+          person_a_id: string;
+          person_b_id: string;
+          kind: SocialConnectionKind;
+          created_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          person_a_id: string;
+          person_b_id: string;
+          kind?: SocialConnectionKind;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          person_a_id?: string;
+          person_b_id?: string;
+          kind?: SocialConnectionKind;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -320,6 +351,13 @@ export interface Database {
         };
         Returns: Json;
       };
+      grant_tree_access: {
+        Args: {
+          p_requester_user_id: string;
+          p_tier?: TreePermissionTier;
+        };
+        Returns: Json;
+      };
     };
     Enums: {
       gender_enum: Gender;
@@ -327,6 +365,7 @@ export interface Database {
       union_type_enum: UnionType;
       edge_status_enum: EdgeStatus;
       invitation_status_enum: InvitationStatus;
+      social_connection_kind: SocialConnectionKind;
     };
     CompositeTypes: {
       [_ in never]: never;

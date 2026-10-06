@@ -17,7 +17,7 @@
    - **Paternal Branch (Right)**: Father (center-right) $\rightarrow$ Paternal uncle $\rightarrow$ Paternal uncle spouse (outer right).
    - Maternal and paternal branches MUST NOT cross or interleave. The mother and father are the central axis of Generation -1.
 4. **SVG Orthogonal Bus Bars**: Sibling groups share a horizontal bus bar spanning `[min(child.x) + 110, max(child.x) + 110]`. Parents connect to this bar with a single vertical drop line. Spouses display a heart icon (`<3`) centered between their nodes.
-5. **Claimed Profile Protection**: When `persons.is_claimed = true`, only the owner (`claimed_by_user_id === user.id`) can edit their personal data or add relations directly to their personal anchor.
+5. **Claimed Profile Protection**: When `persons.is_claimed = true`, only the owner (`claimed_by_user_id === user.id`) can edit their personal data or add relations directly to their personal anchor. **Exception**: User Zero can edit data and relations of claimed profiles (support during development); deleting a claimed profile still requires "Liberar ficha" first.
 6. **Parental Lineage Integrity & Explicit Unions**:
    - Sibling registration must explicitly declare shared parentage (`'both' | 'maternal' | 'paternal'`). A sibling must ONLY be linked to the designated biological parent(s).
    - Registering a second parent must NEVER automatically forge a marital union with existing parents; couple unions must be explicitly opt-in (`create_union === true`).
@@ -33,6 +33,10 @@
    - An individual with multiple partners (ex-spouses, current partner, co-parents) is placed contiguously as a generational axis: `[Partner A] [Person] [Partner B]`.
    - Each sibling group aligns under the horizontal midpoint of their biological parents' union (`resolveChildAnchor`).
    - Adding a child in `createFamilyMemberAction` only auto-links to a spouse if exactly ONE active spouse exists, or if `co_parent_id` is explicitly passed.
+10. **Friends & Dating Are Not Kinship**:
+   - Friends and dating partners live in `social_connections` (`kind: 'friend' | 'dating'`), NEVER in `union_edges`. They are not drawn on the canvas, never feed `getConnectedFamilyIds`, and never merge two families.
+   - `getFamilyMembers` drops social-only people (`socialOnlyPersonIds`) from the family directory; they appear only in the "Amigos" tab (`/?view=amigos`).
+   - Friends see your tree only through `tree_access_shares`, which applies once they have an account.
 
 ---
 
@@ -74,12 +78,14 @@ src/
 │   │   ├── utils/
 │   │   │   ├── kinship-inference.ts # Deduce exact kinship labels + getConnectedFamilyIds
 │   │   │   ├── graph-integrity.ts   # Pure O(V+E) union integrity validator & partitioner
-│   │   │   └── tree-layout.ts       # Pure coordinate layout engine & collision resolver
+│   │   │   ├── tree-layout.ts       # Pure coordinate layout engine & collision resolver
+│   │   │   └── social-connections.ts # Friends/dating helpers (socialOnlyPersonIds)
 │   │   └── components/
 │   │       ├── tree-canvas.tsx         # Pan/Zoom SVG canvas, orthogonal bus bars, node rendering
 │   │       ├── tree-selector.tsx       # Dropdown: My Tree vs. Approved Friend Trees
 │   │       ├── tree-search-modal.tsx   # Cmd+K quick person search modal
 │   │       ├── family-directory.tsx    # Table/grid list of family members with status badges
+│   │       ├── friends-directory.tsx   # "Amigos" tab: friends/dating, invitations, tree access tiers
 │   │       ├── add-member-modal.tsx    # Modal to add relative connected to an anchor
 │   │       ├── edit-member-modal.tsx   # Modal to edit person, parental edges, and unions
 │   │       ├── friends-manager-modal.tsx # Manage friend requests and granted tree access tiers
@@ -147,6 +153,14 @@ To allow editing and reassigning roles without mutating database schemas:
 - `parentConnections`: `{ edgeId: string; parentId: string; parentName: string; relationshipType: string }[]`
 - `childConnections`: `{ edgeId: string; childId: string; childName: string; relationshipType: string }[]`
 Exposed on `FamilyMemberItem`, `EditableMemberData`, and `TreeNodeData`. The edit modal now loads relations fresh via `getMemberRelationsAction` instead.
+
+### 4.7. `social_connections`
+Friends and dating relationships, kept outside the genealogical graph (migration `20261005000000_social_connections.sql`).
+- `person_a_id`, `person_b_id` (UUID, FK $\rightarrow$ `persons.id`): one row per pair, order-independent (unique on `LEAST/GREATEST`).
+- `kind` (`'friend' | 'dating'`).
+- `created_by_user_id` (UUID).
+- RLS: visible/editable by the creator, the owners of either person, and User Zero.
+- RPC `grant_tree_access(p_requester_user_id, p_tier)`: the owner grants or changes access to their tree directly (approved share), without a prior request.
 
 ---
 
@@ -336,6 +350,12 @@ Two tabs, nothing else:
 
 ### Permissions for relationship changes
 `checkCanEditRelations(supabase, personIds)` in `actions.ts` is the single rule: User Zero, or every person is in the user's family (`getUserFamilyScope`) and none is claimed by another account. Editing/deleting a person's data is limited to User Zero, the record's creator, or members of the same family.
+
+### Friends and dating (`/?view=amigos`)
+1. "Agregar amigo" calls `createFriendAction` in `friends-actions.ts`: links an existing account (`existingPersonId`, found via `searchUsersForSharingAction`) or creates an unclaimed `persons` row plus the `social_connections` row (rolled back if the link fails). The invite reuses `InviteModal` with relationship `Amigo/Amiga/Novio/Novia`.
+2. "Terminamos · quedamos como amigos" calls `updateFriendKindAction(id, 'friend')`. "Quitar" calls `removeFriendAction`, which also deletes the person if it is unclaimed, was created by the user and has no other links.
+3. Once the friend has an account, "Qué ve de tu árbol" calls `setFriendTreeAccessAction(personId, tier | 'none')`.
+4. A dating relationship that was registered as a union (shows up as "Ex-pareja (Separados)"): the directory card offers "¿Fue un noviazgo? Pasar a amistad" → `convertUnionToSocialAction`. Only the two people or User Zero can do it. The union is deleted unless they share children.
 
 ### Adding a new access tier for friend sharing
 1. Update `TreePermissionTier` union in `src/features/genealogy/types.ts`.

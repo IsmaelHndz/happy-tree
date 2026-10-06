@@ -172,7 +172,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
       const node = nodeMap.get(m.id);
       if (!node) return true;
       const isSelfNode = node.id === graph.focusPerson.id || node.relationshipCategory === "self";
-      return !node.isClaimed || isSelfNode;
+      return !node.isClaimed || isSelfNode || graph.isUserZero;
     })
     .map((m) => ({
       id: m.id,
@@ -600,7 +600,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   {/* Botón rápido para agregar pariente anclado a este nodo (Bloqueado para fichas de otros usuarios verificados) */}
                   {!graph.isViewerGuest && (() => {
                     const isSelfNode = node.id === graph.focusPerson.id || node.relationshipCategory === "self";
-                    if (node.isClaimed && !isSelfNode) return null;
+                    if (node.isClaimed && !isSelfNode && !graph.isUserZero) return null;
                     return (
                       <button
                         onClick={(e) => {
@@ -619,7 +619,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   {(() => {
                     if (graph.isViewerGuest) return null;
                     const isSelfNode = node.id === graph.focusPerson.id || node.relationshipCategory === "self";
-                    if (!isSelfNode && node.isClaimed) return null;
+                    if (!isSelfNode && node.isClaimed && !graph.isUserZero) return null;
                     return (
                       <button
                         onClick={(e) => {

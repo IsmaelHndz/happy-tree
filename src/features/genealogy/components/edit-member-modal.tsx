@@ -43,6 +43,8 @@ interface EditMemberModalProps {
   availableFamilyMembers?: { id: string; name: string }[];
   isUserZero?: boolean;
   isSelf?: boolean;
+  /** false para fichas que no son familia (amigos): solo se editan sus datos */
+  showFamilyTab?: boolean;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -86,11 +88,14 @@ export function EditMemberModal({
   availableFamilyMembers = [],
   isUserZero = false,
   isSelf = false,
+  showFamilyTab = true,
   isOpen,
   onClose,
 }: EditMemberModalProps) {
   const router = useRouter();
-  const isReadOnly = Boolean(member.isClaimed && !isSelf);
+  // El Usuario Cero puede corregir fichas reclamadas (soporte durante el desarrollo)
+  const isReadOnly = Boolean(member.isClaimed && !isSelf && !isUserZero);
+  const isAdminOverride = Boolean(member.isClaimed && !isSelf && isUserZero);
   const [tab, setTab] = useState<"datos" | "familia">("datos");
 
   // ---------------------------------------------------------------- Datos
@@ -363,6 +368,7 @@ export function EditMemberModal({
         </div>
 
         {/* Pestañas */}
+        {showFamilyTab && (
         <div className="flex gap-1.5 mb-5 p-1 rounded-xl bg-neutral-950 border border-neutral-800">
           {(["datos", "familia"] as const).map((t) => (
             <button
@@ -381,11 +387,21 @@ export function EditMemberModal({
             </button>
           ))}
         </div>
+        )}
 
         {isReadOnly && (
           <div className="mb-4 p-3 rounded-xl bg-neutral-950/80 border border-neutral-800 flex items-center gap-2 text-xs text-neutral-300">
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>{firstNameOnly} ya tiene cuenta propia; solo esa persona puede cambiar su información.</span>
+          </div>
+        )}
+
+        {isAdminOverride && (
+          <div className="mb-4 p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 flex items-center gap-2 text-xs text-amber-200">
+            <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              {firstNameOnly} ya tiene cuenta propia. Como Usuario Cero puedes corregir su ficha; los cambios se reflejan en su cuenta.
+            </span>
           </div>
         )}
 

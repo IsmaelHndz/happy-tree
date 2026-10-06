@@ -38,6 +38,11 @@ export default async function InvitePage({ params }: InvitePageProps) {
     );
   }
 
+  // Las invitaciones de la vista de Amigos usan estas etiquetas como relación propuesta
+  const isFriendInvite = ["Amigo", "Amiga", "Amistad", "Novio", "Novia", "Noviazgo"].includes(
+    invite.proposedRelationship ?? ""
+  );
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-6 selection:bg-emerald-500 selection:text-black">
       <div className="w-full max-w-lg bg-neutral-900/90 border border-neutral-800 rounded-3xl p-8 sm:p-10 shadow-2xl backdrop-blur-md">
@@ -47,10 +52,10 @@ export default async function InvitePage({ params }: InvitePageProps) {
             <HeartHandshake className="w-7 h-7" />
           </div>
           <span className="text-xs font-mono text-emerald-400 bg-emerald-950/80 border border-emerald-800/50 px-3 py-1 rounded-full uppercase tracking-wider">
-            Reclamación de Ficha Familiar
+            {isFriendInvite ? "Invitación de Amistad" : "Reclamación de Ficha Familiar"}
           </span>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white mt-3">
-            ¡Bienvenido a la Familia!
+            {isFriendInvite ? "¡Bienvenido a Happy Tree!" : "¡Bienvenido a la Familia!"}
           </h1>
           <p className="text-xs sm:text-sm text-neutral-400 mt-2 leading-relaxed">
             {invite.inviterName ? (
