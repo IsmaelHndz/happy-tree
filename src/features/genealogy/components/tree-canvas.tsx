@@ -7,7 +7,7 @@ import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { TreeSearchModal } from "./tree-search-modal";
-import { buildSiblingGroups, parentGroupKey, staggerBusRows } from "../utils/sibling-groups";
+import { buildFamilyBranches, buildSiblingGroups, parentGroupKey, staggerBusRows } from "../utils/sibling-groups";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -48,9 +48,9 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   // Toggle de control de complejidad: Ocultar parejas de hermanos por defecto
   const [hideSiblingSpouses, setHideSiblingSpouses] = useState(true);
 
-  // Familia resaltada (unión + sus hijos): hover en escritorio, toque fijado en móvil
-  const [hoveredGroupKey, setHoveredGroupKey] = useState<string | null>(null);
-  const [pinnedGroupKey, setPinnedGroupKey] = useState<string | null>(null);
+  // Rama resaltada (unión + descendientes). Se queda fija hasta pasar a otra rama
+  // o hacer clic en el fondo; en móvil se activa con un toque.
+  const [activeBranchKey, setActiveBranchKey] = useState<string | null>(null);
   const pointerDownAt = useRef({ x: 0, y: 0 });
 
   // Atajo de teclado global Cmd+K / Ctrl+K
@@ -118,7 +118,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
     const target = e.target as Element;
     if (target.closest(".tree-node-card, .union-heart, .tree-controls")) return;
     const moved = Math.hypot(e.clientX - pointerDownAt.current.x, e.clientY - pointerDownAt.current.y);
-    if (moved < 5) setPinnedGroupKey(null);
+    if (moved < 5) setActiveBranchKey(null);
   };
 
   // Zoom con la rueda del ratón
@@ -166,12 +166,14 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   // =========================================================================
   // Cada grupo de hijos cuelga de su unión; si alguien tiene hijos con varias
   // parejas, cada grupo lleva su propio color y una etiqueta "con X".
+  const visibleIds = new Set(nodeMap.keys());
+  const parentChildPairs = graph.edges
+    .filter((e) => e.type === "parent-child")
+    .map((e) => ({ parentId: e.sourceId, childId: e.targetId }));
   const siblingGroups = buildSiblingGroups({
     focusId: graph.focusPerson.id,
-    visibleIds: new Set(nodeMap.keys()),
-    parentEdges: graph.edges
-      .filter((e) => e.type === "parent-child")
-      .map((e) => ({ parentId: e.sourceId, childId: e.targetId })),
+    visibleIds,
+    parentEdges: parentChildPairs,
     firstNameOf: (id) => nodeMap.get(id)?.firstName ?? "",
   });
   const groupByKey = new Map(siblingGroups.map((g) => [g.key, g]));
@@ -184,11 +186,16 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   );
   const unionPairKeys = new Set(visibleUnionEdges.map((e) => parentGroupKey([e.sourceId, e.targetId])));
 
-  // Resaltado: hover (escritorio) o toque fijado (móvil) sobre un corazón o un hijo.
-  const activeGroupKey = hoveredGroupKey ?? pinnedGroupKey;
-  const activeGroup = activeGroupKey ? groupByKey.get(activeGroupKey) ?? null : null;
-  const highlightedIds = activeGroup ? new Set([...activeGroup.parentIds, ...activeGroup.childIds]) : null;
-  const togglePinnedGroup = (key: string) => setPinnedGroupKey((prev) => (prev === key ? null : key));
+  // Ramas: cada unión multi-pareja con sus hijos, nietos y demás descendientes visibles.
+  const { membersByKey, branchOfPerson } = buildFamilyBranches({
+    groups: siblingGroups,
+    parentEdges: parentChildPairs,
+    unions: visibleUnionEdges.map((e) => ({ personAId: e.sourceId, personBId: e.targetId })),
+    visibleIds,
+  });
+  const highlightedIds = activeBranchKey ? membersByKey.get(activeBranchKey) ?? null : null;
+  const branchOfGroup = (key: string) =>
+    membersByKey.has(key) ? key : branchOfPerson.get(groupByKey.get(key)?.childIds[0] ?? "");
 
   const buses = staggerBusRows(
     siblingGroups.flatMap((group) => {
@@ -351,7 +358,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           {/* Horquillas genealógicas: unión (corazón) -> barra de hermanos -> hijos */}
           {buses.map(({ group, children, parentMidX, dropStartY, busY, busStartX, busEndX }) => {
             const color = group.color;
-            const dimmed = activeGroupKey !== null && activeGroupKey !== group.key;
+            const dimmed = highlightedIds !== null && !group.childIds.some((c) => highlightedIds.has(c));
             const labelWidth = group.label ? group.label.length * 6 + 16 : 0;
             const labelY = (dropStartY + busY) / 2;
             return (
@@ -440,7 +447,9 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
 
             const key = parentGroupKey([edge.sourceId, edge.targetId]);
             const group = groupByKey.get(key);
-            const dimmed = activeGroupKey !== null && activeGroupKey !== key;
+            const branchKey = group ? branchOfGroup(key) : undefined;
+            const dimmed =
+              highlightedIds !== null && !(highlightedIds.has(edge.sourceId) && highlightedIds.has(edge.targetId));
             const isSeparatedOrDivorced = edge.unionType === "divorced" || edge.unionType === "separated";
             const lineColor = isSeparatedOrDivorced ? "#71717a" : group?.color ?? "#f472b6";
 
@@ -457,13 +466,12 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   strokeDasharray={isSeparatedOrDivorced ? "4 4" : undefined}
                 />
                 <g
-                  className={group ? "union-heart cursor-pointer" : undefined}
-                  style={group ? { pointerEvents: "all" } : undefined}
-                  role={group ? "button" : undefined}
-                  aria-label={group ? `Resaltar hijos de esta unión` : undefined}
-                  onMouseEnter={group ? () => setHoveredGroupKey(key) : undefined}
-                  onMouseLeave={group ? () => setHoveredGroupKey(null) : undefined}
-                  onClick={group ? () => togglePinnedGroup(key) : undefined}
+                  className={branchKey ? "union-heart cursor-pointer" : undefined}
+                  style={branchKey ? { pointerEvents: "all" } : undefined}
+                  role={branchKey ? "button" : undefined}
+                  aria-label={branchKey ? "Resaltar la familia de esta unión" : undefined}
+                  onMouseEnter={branchKey ? () => setActiveBranchKey(branchKey) : undefined}
+                  onClick={branchKey ? () => setActiveBranchKey(branchKey) : undefined}
                 >
                   {isSeparatedOrDivorced ? (
                     <>
@@ -481,7 +489,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                       />
                     </>
                   )}
-                  {pinnedGroupKey === key && (
+                  {activeBranchKey === key && (
                     <circle cx={midX} cy={y1} r="14" fill="none" stroke={group?.color} strokeWidth="1.5" strokeOpacity="0.6" />
                   )}
                 </g>
@@ -500,9 +508,10 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           const initials = `${node.firstName[0] || ""}${node.lastName[0] || ""}`.toUpperCase();
           const childGroupKey = groupKeyOfChild.get(node.id);
           const childGroup = childGroupKey ? groupByKey.get(childGroupKey) : undefined;
-          // Solo los hijos de alguien con varias parejas activan el resaltado y llevan franja
+          // Solo los hijos de alguien con varias parejas llevan franja de color
           const multiGroup = childGroup?.isMultiPartner ? childGroup : undefined;
           const isDimmed = highlightedIds !== null && !highlightedIds.has(node.id);
+          const nodeBranchKey = branchOfPerson.get(node.id);
 
           return (
             <div
@@ -514,13 +523,12 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                 width: `${NODE_WIDTH}px`,
                 height: `${NODE_HEIGHT}px`,
               }}
-              onMouseEnter={multiGroup ? () => setHoveredGroupKey(multiGroup.key) : undefined}
-              onMouseLeave={multiGroup ? () => setHoveredGroupKey(null) : undefined}
+              onMouseEnter={nodeBranchKey ? () => setActiveBranchKey(nodeBranchKey) : undefined}
               onClick={
-                multiGroup
+                nodeBranchKey
                   ? (e) => {
                       if ((e.target as HTMLElement).closest("button, a")) return;
-                      togglePinnedGroup(multiGroup.key);
+                      setActiveBranchKey(nodeBranchKey);
                     }
                   : undefined
               }
@@ -798,7 +806,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
               <span className="w-2.5 h-1 bg-sky-400 inline-block rounded" />
               <span className="w-2.5 h-1 bg-amber-400 inline-block rounded" />
             </span>
-            <span>Hijos con otra pareja · toca un ♥ para resaltarlos</span>
+            <span>Hijos con otra pareja · pasa el cursor o toca un ♥ para resaltar su familia</span>
           </div>
         )}
         <div className="flex items-center gap-1.5">

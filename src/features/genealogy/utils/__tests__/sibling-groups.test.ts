@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSiblingGroups, DEFAULT_LINE_COLOR, staggerBusRows } from "../sibling-groups";
+import { buildFamilyBranches, buildSiblingGroups, DEFAULT_LINE_COLOR, staggerBusRows } from "../sibling-groups";
 
 // Audelia tuvo a luis/eve con Juan y a rubi/sixto con Mason. Rubi tiene a ism (padre fuera de vista).
 const names: Record<string, string> = { juan: "Juan", aud: "Audelia", mason: "Mason", rubi: "Rubi" };
@@ -78,5 +78,28 @@ describe("barras de hermanos solapadas", () => {
     ]);
     const y = Object.fromEntries(out.map((b) => [b.id, b.busY]));
     expect(y).toEqual({ a: 100, b: 114, c: 100 });
+  });
+});
+
+describe("ramas familiares para el resaltado", () => {
+  const groups = build("sixto");
+  const branches = buildFamilyBranches({
+    groups,
+    parentEdges,
+    unions: [{ personAId: "rubi", personBId: "jorge" }],
+    visibleIds: new Set([...visibleIds, "jorge"]),
+  });
+
+  it("la rama de una unión incluye nietos y la pareja de los hijos", () => {
+    const conMason = branches.membersByKey.get("aud_mason")!;
+    expect([...conMason].sort()).toEqual(["aud", "ism", "jorge", "mason", "rubi", "sixto"]);
+    expect(conMason.has("luis")).toBe(false);
+  });
+
+  it("los nietos pertenecen a la rama de su abuela con esa pareja", () => {
+    expect(branches.branchOfPerson.get("ism")).toBe("aud_mason");
+    expect(branches.branchOfPerson.get("luis")).toBe("aud_juan");
+    // Audelia está en las dos ramas, no se asigna a ninguna
+    expect(branches.branchOfPerson.has("aud")).toBe(false);
   });
 });

@@ -142,3 +142,72 @@ export function staggerBusRows<T extends { busY: number; busStartX: number; busE
   }
   return out;
 }
+
+export interface FamilyBranches {
+  // Por cada grupo multi-pareja: sus padres, hijos, descendientes visibles y las parejas de esos descendientes
+  membersByKey: Map<string, Set<string>>;
+  // Rama a la que pertenece cada persona (la unión multi-pareja más cercana hacia arriba).
+  // Los padres compartidos (p. ej. Audelia) no se asignan: pertenecen a varias ramas.
+  branchOfPerson: Map<string, string>;
+}
+
+export function buildFamilyBranches(input: {
+  groups: SiblingGroup[];
+  parentEdges: { parentId: string; childId: string }[];
+  unions: { personAId: string; personBId: string }[];
+  visibleIds: Set<string>;
+}): FamilyBranches {
+  const { groups, parentEdges, unions, visibleIds } = input;
+
+  const childrenOf = new Map<string, string[]>();
+  const coParentsOf = new Map<string, Set<string>>();
+  const parentsOfChild = new Map<string, string[]>();
+  for (const { parentId, childId } of parentEdges) {
+    childrenOf.set(parentId, [...(childrenOf.get(parentId) ?? []), childId]);
+    parentsOfChild.set(childId, [...(parentsOfChild.get(childId) ?? []), parentId]);
+  }
+  for (const parents of parentsOfChild.values()) {
+    for (const p of parents) {
+      const set = coParentsOf.get(p) ?? new Set<string>();
+      parents.forEach((q) => q !== p && set.add(q));
+      coParentsOf.set(p, set);
+    }
+  }
+  for (const { personAId, personBId } of unions) {
+    coParentsOf.set(personAId, (coParentsOf.get(personAId) ?? new Set()).add(personBId));
+    coParentsOf.set(personBId, (coParentsOf.get(personBId) ?? new Set()).add(personAId));
+  }
+
+  const membersByKey = new Map<string, Set<string>>();
+  const best = new Map<string, { key: string; depth: number }>();
+
+  for (const group of groups) {
+    if (!group.isMultiPartner) continue;
+    const members = new Set<string>(group.parentIds);
+    // BFS iterativo hacia abajo desde los hijos de esta unión
+    const queue: { id: string; depth: number }[] = group.childIds.map((id) => ({ id, depth: 1 }));
+    const seen = new Set<string>(group.childIds);
+    while (queue.length) {
+      const { id, depth } = queue.shift()!;
+      if (visibleIds.has(id)) {
+        members.add(id);
+        const prev = best.get(id);
+        if (!prev || depth < prev.depth) best.set(id, { key: group.key, depth });
+      }
+      for (const partner of coParentsOf.get(id) ?? []) {
+        if (visibleIds.has(partner) && !group.parentIds.includes(partner)) members.add(partner);
+      }
+      for (const child of childrenOf.get(id) ?? []) {
+        if (!seen.has(child)) {
+          seen.add(child);
+          queue.push({ id: child, depth: depth + 1 });
+        }
+      }
+    }
+    membersByKey.set(group.key, members);
+  }
+
+  const branchOfPerson = new Map<string, string>();
+  best.forEach(({ key }, id) => branchOfPerson.set(id, key));
+  return { membersByKey, branchOfPerson };
+}
