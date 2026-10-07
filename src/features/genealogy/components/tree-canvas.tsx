@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useTransition } from "react";
 import type { FamilyGraphData, TreeNodeData } from "../types/graph.types";
 import { formatFullName } from "../types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
@@ -9,6 +9,7 @@ import { AddMemberModal } from "@/features/genealogy/components/add-member-modal
 import { TreeSearchModal } from "./tree-search-modal";
 import { TREE_LAYOUT } from "../utils/tree-layout";
 import { relativesOf } from "../utils/person-display";
+import { DEFAULT_TREE_SCOPE, saveTreeScope, TREE_SCOPE_OPTIONS, type TreeScope } from "../utils/tree-scope";
 import { PersonCard } from "./person-card";
 import { PersonDetailsPanel } from "./person-details-panel";
 import {
@@ -45,6 +46,20 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   const [activeInviteMember, setActiveInviteMember] = useState<TreeNodeData | null>(null);
   const [activeEditMember, setActiveEditMember] = useState<TreeNodeData | null>(null);
   const [activeAddAnchor, setActiveAddAnchor] = useState<TreeNodeData | null>(null);
+  // Alcance del árbol propio: se guarda en una cookie y el servidor vuelve a calcular el árbol
+  const [isScopePending, startScopeTransition] = useTransition();
+  const currentScope = graph.scope ?? DEFAULT_TREE_SCOPE;
+  const changeScope = (scope: TreeScope) => {
+    if (scope === currentScope) return;
+    saveTreeScope(scope);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("alcance");
+    startScopeTransition(() => {
+      router.replace(`${url.pathname}${url.search}`);
+      router.refresh();
+    });
+  };
+
   // Persona abierta en el panel lateral de detalles
   const [detailsPersonId, setDetailsPersonId] = useState<string | null>(null);
 
@@ -553,6 +568,39 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
               <UserPlus className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Añadir Pariente</span>
             </button>
+            <div className="w-[1px] h-5 bg-neutral-800 mx-1" />
+          </>
+        )}
+
+        {/* Alcance: qué tan extenso se ve el propio árbol */}
+        {!graph.isViewerGuest && (
+          <>
+            <div
+              role="radiogroup"
+              aria-label="Alcance del árbol"
+              className={`flex items-center gap-0.5 p-0.5 rounded-xl bg-neutral-950 border border-neutral-800 ${
+                isScopePending ? "opacity-60" : ""
+              }`}
+            >
+              {TREE_SCOPE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={currentScope === option.value}
+                  disabled={isScopePending}
+                  onClick={() => changeScope(option.value)}
+                  title={option.description}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                    currentScope === option.value
+                      ? "bg-emerald-500/20 text-emerald-300"
+                      : "text-neutral-400 hover:text-white"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
             <div className="w-[1px] h-5 bg-neutral-800 mx-1" />
           </>
         )}

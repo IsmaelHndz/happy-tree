@@ -8,6 +8,7 @@ import { computeTreeLayout } from "../utils/tree-layout";
 import { assignGenerations, selectVisibleNodeIds } from "../utils/visible-nodes";
 import { isMissingColumnError, MISSING_NAME_COLUMNS_MESSAGE } from "../utils/db-errors";
 import { formatFullName } from "../types";
+import { DEFAULT_TREE_SCOPE, tierForScope, type TreeScope } from "../utils/tree-scope";
 
 /**
  * Consulta la base de datos y calcula la distribución espacial por generaciones del árbol familiar,
@@ -23,7 +24,9 @@ import { formatFullName } from "../types";
  */
 export async function getFamilyGraph(
   focusPersonId?: string,
-  targetUserId?: string
+  targetUserId?: string,
+  // Alcance que la persona eligió para su propio árbol (los invitados usan el nivel compartido)
+  scope: TreeScope = DEFAULT_TREE_SCOPE
 ): Promise<FamilyGraphData> {
   const supabase = await createClient();
   const {
@@ -294,7 +297,7 @@ export async function getFamilyGraph(
     centerPersonId,
     parentEdges: allParentEdges ?? [],
     unions: treeVisibleUnions,
-    tier: isViewerGuest ? viewerTier ?? "basic" : "owner",
+    tier: isViewerGuest ? viewerTier ?? "basic" : tierForScope(scope),
   });
   const nodeIds = grantedNodeIds ? tierNodeIds.filter((id) => grantedNodeIds.has(id)) : tierNodeIds;
 
@@ -626,6 +629,7 @@ export async function getFamilyGraph(
     isUserZero,
     viewerTier,
     isViewerGuest,
+    scope: isViewerGuest ? undefined : scope,
     treeOwnerName,
     accessibleTrees,
   };

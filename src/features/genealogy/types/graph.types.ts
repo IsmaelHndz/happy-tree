@@ -1,3 +1,4 @@
+import type { TreeScope } from "../utils/tree-scope";
 import type { Gender } from "@/types/database.types";
 
 export interface TreeNodeData {
@@ -92,6 +93,8 @@ export interface FamilyGraphData {
   isUserZero: boolean;
   viewerTier?: "profile" | "basic" | "intermediate" | "advanced";
   isViewerGuest?: boolean;
+  // Alcance elegido por la persona en su propio árbol (ausente para invitados)
+  scope?: TreeScope;
   treeOwnerName?: string;
   accessibleTrees?: AccessibleTreeOption[];
 }

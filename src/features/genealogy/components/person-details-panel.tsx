@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Cake, Compass, KeyRound, Pencil, ShieldCheck, Clock, UserPlus, X } from "lucide-react";
 import { formatFullName } from "../types";
 import type { PersonCardData } from "./person-card";
@@ -83,7 +84,9 @@ export function PersonDetailsPanel({
     { title: "Hijos", people: family.children },
   ].filter((g) => g.people.length > 0);
 
-  return (
+  // Portal a <body>: fuera del lienzo del árbol (que captura arrastre, rueda y clics) y de
+  // cualquier contenedor con transform/filter que cambie la referencia de position: fixed.
+  return createPortal(
     <aside
       role="dialog"
       aria-label={`Detalles de ${fullName}`}
@@ -116,9 +119,9 @@ export function PersonDetailsPanel({
           type="button"
           onClick={onClose}
           aria-label="Cerrar detalles"
-          className="p-2 rounded-xl text-neutral-400 hover:text-white hover:bg-neutral-800 transition shrink-0"
+          className="w-11 h-11 -mr-2 -mt-2 flex items-center justify-center rounded-xl text-neutral-400 hover:text-white hover:bg-neutral-800 transition shrink-0"
         >
-          <X className="w-4 h-4" />
+          <X className="w-5 h-5" />
         </button>
       </div>
 
@@ -245,6 +248,7 @@ export function PersonDetailsPanel({
           </div>
         </div>
       )}
-    </aside>
+    </aside>,
+    document.body
   );
 }

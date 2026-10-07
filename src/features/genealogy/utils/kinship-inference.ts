@@ -417,6 +417,54 @@ export function inferKinship({
     }
   }
 
+  // 9.1 Familia de los bisabuelos (vista "Completa"): tíos abuelos, tíos segundos y primos segundos.
+  //     El lado materno/paterno lo da el progenitor de la raíz por el que se conecta.
+  if (rootParentIds.length > 0 && targetParentIds.length > 0) {
+    const parentsOf = (id: string) => parentEdges.filter((e) => e.child_id === id).map((e) => e.parent_id);
+    for (const parentId of rootParentIds) {
+      const grandParents = parentsOf(parentId);
+      const greatGrandParents = new Set(grandParents.flatMap(parentsOf));
+      if (greatGrandParents.size === 0) continue;
+      // Hermanos de los abuelos por este lado (comparten al menos un bisabuelo)
+      const greatUncles = new Set(
+        parentEdges
+          .filter((e) => greatGrandParents.has(e.parent_id) && !grandParents.includes(e.child_id))
+          .map((e) => e.child_id)
+      );
+      const isMaternal = personsMap?.get(parentId)?.gender === "female";
+      const side = (fem: string, masc: string) => (isFemale ? fem : masc);
+      const sideWord = isMaternal ? side("materna", "materno") : side("paterna", "paterno");
+
+      if (greatUncles.has(targetPersonId)) {
+        return {
+          relationshipLabel: `${isFemale ? "Tía abuela" : isMale ? "Tío abuelo" : "Tío/a abuelo/a"} ${sideWord}`,
+          relationshipCategory: "other",
+          explanation: "Hermano/a de uno de tus abuelos",
+          degree: 4,
+        };
+      }
+      const secondUncles = new Set(
+        parentEdges.filter((e) => greatUncles.has(e.parent_id)).map((e) => e.child_id)
+      );
+      if (secondUncles.has(targetPersonId)) {
+        return {
+          relationshipLabel: `${isFemale ? "Tía segunda" : isMale ? "Tío segundo" : "Tío/a segundo/a"} ${sideWord}`,
+          relationshipCategory: "other",
+          explanation: `Primo/a de tu ${isMaternal ? "madre" : "padre"}`,
+          degree: 5,
+        };
+      }
+      if (targetParentIds.some((p) => secondUncles.has(p))) {
+        return {
+          relationshipLabel: isFemale ? "Prima segunda" : isMale ? "Primo segundo" : "Primo/a segundo/a",
+          relationshipCategory: "other",
+          explanation: "Comparte bisabuelos en común contigo",
+          degree: 6,
+        };
+      }
+    }
+  }
+
   // 10. Familia Política (Familiares por Unión Conyugal)
   // Cuñado/a (hermano de cónyuge o cónyuge de hermano)
   // 10.1 Hermano de tu cónyuge -> Cuñado/a

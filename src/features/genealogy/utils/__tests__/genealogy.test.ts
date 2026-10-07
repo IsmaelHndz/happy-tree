@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { classifyUnionIssue, partitionUnionsByIntegrity, wouldCreateParentCycle } from "../graph-integrity";
 import { getConnectedFamilyIds, inferKinship } from "../kinship-inference";
-import { assignGenerations, selectVisibleNodeIds } from "../visible-nodes";
+import { assignGenerations, selectVisibleNodeIds, type VisibilityTier } from "../visible-nodes";
 import { computeTreeLayout, TREE_LAYOUT } from "../tree-layout";
+import { parseTreeScope, tierForScope } from "../tree-scope";
 import { ALL_IDS, allUnions, corruptUnions, genderOf, parentEdges, personsMap, validUnions } from "./fixtures";
 
 const { validUnions: saneUnions, issues } = partitionUnionsByIntegrity(allUnions, parentEdges);
@@ -398,13 +399,16 @@ describe("línea directa completa en el árbol propio", () => {
     ["bisa", "abuela"], ["bisa2", "abuela"], ["tatara", "bisa"],
     ["abuela", "madre"], ["madre", "yo"], ["padre", "yo"],
     ["yo", "hijo"], ["hijo", "nieta"], ["nieta", "bisnieto"], ["yerno", "bisnieto"],
+    // Familia de los bisabuelos: tío abuelo → tía segunda → primo segundo
+    ["bisa", "tioabuelo"], ["bisa2", "tioabuelo"], ["tioabuelo", "tiasegunda"], ["tiasegunda", "primosegundo"],
   ].map(([parent_id, child_id]) => ({ parent_id, child_id }));
   const meta: [string, "male" | "female"][] = [
     ["bisa", "female"], ["bisa2", "male"], ["tatara", "male"], ["abuela", "female"], ["madre", "female"],
     ["padre", "male"], ["yo", "female"], ["hijo", "male"], ["nieta", "female"], ["bisnieto", "male"], ["yerno", "male"],
+    ["tioabuelo", "male"], ["tiasegunda", "female"], ["primosegundo", "male"],
   ];
   const personsMap = new Map(meta.map(([id, gender]) => [id, { id, firstName: id, lastName: "", gender }]));
-  const visibleAs = (tier: "owner" | "intermediate") =>
+  const visibleAs = (tier: VisibilityTier) =>
     new Set(selectVisibleNodeIds({ centerPersonId: "yo", parentEdges: edges, unions: [], tier }).nodeIds);
   const kin = (target: string) =>
     inferKinship({
@@ -425,6 +429,30 @@ describe("línea directa completa en el árbol propio", () => {
     const v = visibleAs("intermediate");
     expect(v.has("abuela")).toBe(true);
     expect(v.has("bisa")).toBe(false);
+  });
+
+  it("los alcances Cercana, Extendida y Completa crecen en ese orden", () => {
+    const close = visibleAs(tierForScope("close"));
+    const extended = visibleAs(tierForScope("extended"));
+    const full = visibleAs(tierForScope("full"));
+    expect(close.has("abuela")).toBe(false);
+    expect(extended.has("bisa")).toBe(true);
+    expect(extended.has("tioabuelo")).toBe(false);
+    for (const id of ["tioabuelo", "tiasegunda", "primosegundo"]) expect([id, full.has(id)]).toEqual([id, true]);
+    for (const id of close) expect(extended.has(id)).toBe(true);
+    for (const id of extended) expect(full.has(id)).toBe(true);
+  });
+
+  it("un alcance desconocido o vacío usa Extendida", () => {
+    expect(parseTreeScope(undefined)).toBe("extended");
+    expect(parseTreeScope("todo")).toBe("extended");
+    expect(parseTreeScope("full")).toBe("full");
+  });
+
+  it("nombres de la familia de los bisabuelos", () => {
+    expect(kin("tioabuelo").relationshipLabel).toBe("Tío abuelo materno");
+    expect(kin("tiasegunda").relationshipLabel).toBe("Tía segunda materna");
+    expect(kin("primosegundo").relationshipLabel).toBe("Primo segundo");
   });
 
   it("etiquetas de la línea directa lejana", () => {

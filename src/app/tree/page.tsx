@@ -7,13 +7,15 @@ import { TreeSelector } from "@/features/genealogy/components/tree-selector";
 import { FriendsManagerModal } from "@/features/genealogy/components/friends-manager-modal";
 import { formatFullName } from "@/features/genealogy/types";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { parseTreeScope, TREE_SCOPE_COOKIE } from "@/features/genealogy/utils/tree-scope";
 import Link from "next/link";
 import { GitFork, Users, LogOut, Shield } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 interface TreePageProps {
-  searchParams: Promise<{ focus?: string; friendId?: string }>;
+  searchParams: Promise<{ focus?: string; friendId?: string; alcance?: string }>;
 }
 
 export default async function TreePage({ searchParams }: TreePageProps) {
@@ -37,8 +39,11 @@ export default async function TreePage({ searchParams }: TreePageProps) {
     redirect("/?unauthorized=true");
   }
 
-  const { focus, friendId } = await searchParams;
-  const graph = await getFamilyGraph(focus, friendId);
+  const { focus, friendId, alcance } = await searchParams;
+  // Alcance del árbol: ?alcance= (enlace compartido) o la última elección guardada en la cookie
+  const cookieStore = await cookies();
+  const scope = parseTreeScope(alcance ?? cookieStore.get(TREE_SCOPE_COOKIE)?.value);
+  const graph = await getFamilyGraph(focus, friendId, scope);
 
   const availableAnchors = graph.availableMembers.map((m) => ({
     id: m.id,

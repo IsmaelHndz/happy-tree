@@ -161,6 +161,7 @@ Access control table for sharing trees with external friends.
   - `'intermediate'`: Home family + Grandparents, Uncles, Aunts, Cousins, Nephews/Nieces, Grandchildren.
   - `'advanced'`: Intermediate + the rest of the connected component (great-grandparents, distant relatives).
   - The owner's own view (`owner`) is intermediate + blended-family completion + the whole direct line (all ancestors and descendants, e.g. great-grandparents), labeled `Bisabuelo/a`, `Tatarabuelo/a`, `Bisnieto/a`… in `inferKinship` (6.1).
+  - The owner picks how much of their own tree to see (`utils/tree-scope.ts`, selector "Cercana / Extendida / Completa" in the canvas controls, saved in cookie `ht_tree_scope`, overridable with `?alcance=`): `close` → `basic`, `extended` (default) → `owner`, `full` → `advanced` (great-uncles `Tío abuelo`, `Tío segundo`, `Primo segundo`: `inferKinship` 9.1). Guests never use it; they stay clamped to their granted tier.
   - Guests are clamped server-side: `get-family-graph.ts` builds `grantedNodeIds` from the granter's person and tier; `?focus=` outside that set falls back to the granter, and loaded nodes are intersected with it.
 - `status` (`'pending' | 'approved' | 'rejected'`).
 
