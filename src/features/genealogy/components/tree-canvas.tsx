@@ -54,8 +54,8 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   // Toggle de control de complejidad: Ocultar parejas de hermanos por defecto
   const [hideSiblingSpouses, setHideSiblingSpouses] = useState(true);
 
-  // Rama resaltada (unión + descendientes). Se queda fija hasta pasar a otra rama
-  // o hacer clic en el fondo; en móvil se activa con un toque.
+  // Rama resaltada (unión + descendientes): se activa con un clic en una tarjeta o en un
+  // corazón y se quita con un clic en el espacio vacío.
   const [activeBranchKey, setActiveBranchKey] = useState<string | null>(null);
   const pointerDownAt = useRef({ x: 0, y: 0 });
 
@@ -475,7 +475,6 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                   style={branchKey ? { pointerEvents: "all" } : undefined}
                   role={branchKey ? "button" : undefined}
                   aria-label={branchKey ? "Resaltar la familia de esta unión" : undefined}
-                  onMouseEnter={branchKey ? () => setActiveBranchKey(branchKey) : undefined}
                   onClick={branchKey ? () => setActiveBranchKey(branchKey) : undefined}
                 >
                   {isSeparatedOrDivorced ? (
@@ -527,7 +526,6 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                 width: `${NODE_WIDTH}px`,
                 height: `${NODE_HEIGHT}px`,
               }}
-              onMouseEnter={nodeBranchKey ? () => setActiveBranchKey(nodeBranchKey) : undefined}
               onClick={
                 nodeBranchKey
                   ? (e) => {
@@ -536,7 +534,9 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                     }
                   : undefined
               }
-              className={`tree-node-card group p-3 rounded-2xl border transition-all shadow-xl backdrop-blur-md flex flex-col justify-between cursor-default ${
+              className={`tree-node-card group p-3 rounded-2xl border transition-all shadow-xl backdrop-blur-md flex flex-col justify-between ${
+                nodeBranchKey ? "cursor-pointer" : "cursor-default"
+              } ${
                 isDimmed ? "opacity-20" : ""
               } ${
                 isCenter
@@ -808,7 +808,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
             <span className="w-2.5 h-1 bg-amber-400 inline-block rounded" />
             <span className="w-2.5 h-1 bg-violet-400 inline-block rounded" />
           </span>
-          <span>Otras familias · pasa el cursor o toca a alguien para resaltar su familia</span>
+          <span>Otras familias · haz clic en alguien para resaltar su familia</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-red-400 font-bold">≠</span>
