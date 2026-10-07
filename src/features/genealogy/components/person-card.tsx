@@ -95,9 +95,10 @@ export function PersonCard({
         }}
         aria-label={`Ver detalles de ${fullName}`}
         title="Ver detalles"
-        className="absolute top-1.5 right-1.5 p-1.5 rounded-lg text-neutral-500 hover:text-white hover:bg-neutral-800 transition"
+        // En pantallas táctiles el área de toque crece hasta 44px sin cambiar el ícono
+        className="absolute top-1.5 right-1.5 p-1.5 [@media(pointer:coarse)]:top-0 [@media(pointer:coarse)]:right-0 [@media(pointer:coarse)]:p-3.5 rounded-lg text-neutral-500 hover:text-white hover:bg-neutral-800 transition"
       >
-        <PanelRightOpen className="w-3.5 h-3.5" />
+        <PanelRightOpen className="w-3.5 h-3.5 [@media(pointer:coarse)]:w-4 [@media(pointer:coarse)]:h-4" />
       </button>
 
       {/* Avatar con el estado como insignia */}

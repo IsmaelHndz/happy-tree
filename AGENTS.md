@@ -90,9 +90,13 @@ src/
 │   │   │   ├── kinship-inference.ts # Deduce exact kinship labels + getConnectedFamilyIds
 │   │   │   ├── graph-integrity.ts   # Pure O(V+E) union integrity validator & partitioner
 │   │   │   ├── tree-layout.ts       # Pure coordinate layout engine & collision resolver
+│   │   │   ├── tree-scene.ts        # What the canvas draws (cards, buses, unions, colors, highlight); shared by canvas and PDF
+│   │   │   ├── tree-svg.ts          # Scene → standalone SVG for the PDF (WinAnsi-safe text; icons drawn as paths)
+│   │   │   ├── viewport.ts          # Pan/zoom math: zoom at a point, pinch, fit to bounds
 │   │   │   └── social-connections.ts # Friends/dating helpers (socialOnlyPersonIds)
 │   │   └── components/
 │   │       ├── tree-canvas.tsx         # Pan/Zoom SVG canvas, orthogonal bus bars, node rendering
+│   │       ├── export-pdf-modal.tsx    # PDF export: light/dark preview of the current scene, one page sized to the tree (jsPDF + svg2pdf, lazy-loaded)
 │   │       ├── person-card.tsx         # Portrait card (tree + directory): avatar, name, kinship, age; no actions
 │   │       ├── person-details-panel.tsx # Side panel: dates, notes, family, and every action (permission-gated)
 │   │       ├── tree-selector.tsx       # Dropdown: My Tree vs. Approved Friend Trees
@@ -381,6 +385,9 @@ Two tabs, nothing else:
 1. Update `TreePermissionTier` union in `src/features/genealogy/types.ts`.
 2. Update the tier filter in `get-family-graph.ts` (section 8).
 3. Update the tier selector in `friends-manager-modal.tsx` and badge in `tree-selector.tsx`.
+
+### Tree canvas on touch devices
+`tree-canvas.tsx` handles mouse, touch and pen with pointer events on the stage (`touch-action: none`): one pointer pans after a 6px threshold (the browser's click is then suppressed so a drag never opens or highlights a card), two pointers pinch-zoom around their midpoint, and the wheel zooms at the cursor through a native non-passive listener. Below 640px the tree opens fitted to the screen; below 768px secondary controls move to the "⋯" menu. Keep all drawing in `buildTreeScene` so the PDF export stays identical to the screen.
 
 ### Verifying graph logic locally
 ```bash
