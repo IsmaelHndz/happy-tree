@@ -32,8 +32,9 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
    - Sibling registration must explicitly declare shared parentage (`'both' | 'maternal' | 'paternal'`). A sibling must ONLY be linked to the designated biological parent(s).
    - Registering a second parent must NEVER automatically forge a marital union with existing parents; couple unions must be explicitly opt-in (`create_union === true`).
    - Synthetic married unions between co-parents without database entries are strictly prohibited in `get-family-graph.ts`.
-7. **Descendant Generational Alignment (`gen > 0`)**:
-   - Descendant generations must NOT be centered across `x = 0`. Each sibling cluster must align directly underneath the horizontal midpoint of their parent unit in `gen - 1`: `targetCenterX = (P1.x + P2.x + NODE_WIDTH) / 2`.
+7. **Children Centered Under Their Parents (every generation)**:
+   - No row is centered independently across `x = 0`, including the focus row and the parents row. Each sibling cluster must align directly underneath the horizontal midpoint of their parent unit in `gen - 1`: `targetCenterX = (P1.x + P2.x + NODE_WIDTH) / 2`. `tree-layout.ts` alternates up/down passes (partners move apart when their children need room) and always ends with a top-down pass; the whole tree is then shifted so the focus sits at `x = 0`.
+   - A person's partner is attached outside their full-sibling group, never between siblings.
    - Multi-cluster rows must resolve spacing collisions using 1D least-squares block merging with `GAP_X = 50px`, maintaining parental vertical drop symmetry without overlapping.
 8. **Biological Union Sanity & Non-Contradiction**:
    - Marital / partner unions (`union_edges`) MUST NEVER exist between individuals who share direct biological parent-child, ancestor-descendant, or full/half sibling relationships.

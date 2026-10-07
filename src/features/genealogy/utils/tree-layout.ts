@@ -22,10 +22,11 @@
  *      [pareja 2] [persona] [pareja 1], y los hijos de cada unión cuelgan del punto medio correcto.
  *
  * 2. COORDENADAS:
- *    - Gen 0 se empaqueta compacta con la persona foco centrada en x = 0.
+ *    - Gen 0 se empaqueta compacta como punto de partida.
  *    - Ancestros (gen < 0), de abajo hacia arriba: cada persona apunta al centro de sus hijos.
- *    - Descendientes (gen > 0), de arriba hacia abajo: cada persona apunta al punto medio de sus
- *      progenitores (invariante #7).
+ *    - Luego, de arriba hacia abajo en todas las filas (incluida la del foco): cada persona apunta
+ *      al punto medio de sus progenitores, para que los hijos queden centrados bajo sus padres
+ *      (invariante #7). Al final todo se desplaza para dejar al foco en x = 0.
  *    - Las personas sin objetivo (tíos sin hijos visibles, parejas políticas) se "pegan" a su pareja
  *      o al bloque con objetivo más cercano.
  *    - Las colisiones se resuelven con fusión de bloques por mínimos cuadrados (PAVA) respetando
@@ -63,6 +64,7 @@ export interface LayoutPosition {
 type Side = -1 | 0 | 1;
 
 const STEP = TREE_LAYOUT.NODE_WIDTH + TREE_LAYOUT.GAP_X;
+const LAYOUT_ITERATIONS = 20;
 
 export function computeTreeLayout({
   nodes,
@@ -195,6 +197,9 @@ export function computeTreeLayout({
     return a < b ? -1 : a > b ? 1 : 0;
   };
 
+  // Firma de hermanos completos: mismos progenitores visibles ("" si no tiene)
+  const fullSiblingKey = (id: string) => [...getParents(id)].sort().join("_");
+
   const mean = (values: number[]) => values.reduce((s, v) => s + v, 0) / values.length;
 
   const gens = Array.from(new Set(nodes.map((n) => n.generation))).sort((a, b) => a - b);
@@ -234,7 +239,7 @@ export function computeTreeLayout({
         }
         // Preferir la pareja con vínculo vertical en la fila (primaria) o la primera disponible
         const anchor = placedPartners[0];
-        const anchorIdx = order.indexOf(anchor);
+        let anchorIdx = order.indexOf(anchor);
         const focusIdx = order.indexOf(focusId);
 
         let preferred: "L" | "R";
@@ -245,6 +250,28 @@ export function computeTreeLayout({
         const k = attachedCount.get(anchor) ?? 0;
         const sideToUse: "L" | "R" = k % 2 === 0 ? preferred : preferred === "L" ? "R" : "L";
         attachedCount.set(anchor, k + 1);
+
+        // La pareja nunca debe quedar entre hermanos: la persona pasa primero al borde de
+        // su grupo de hermanos completos (mismos padres) del lado donde va la pareja.
+        if (k === 0) {
+          const sig = fullSiblingKey(anchor);
+          if (sig) {
+            const step = sideToUse === "L" ? -1 : 1;
+            let edge = anchorIdx;
+            while (
+              order[edge + step] !== undefined &&
+              order[edge + step] !== focusId &&
+              fullSiblingKey(order[edge + step]) === sig
+            ) {
+              edge += step;
+            }
+            if (edge !== anchorIdx) {
+              order.splice(anchorIdx, 1);
+              order.splice(edge, 0, anchor);
+              anchorIdx = edge;
+            }
+          }
+        }
 
         if (sideToUse === "L") {
           const lc = leftCount.get(anchor) ?? 0;
@@ -491,33 +518,60 @@ export function computeTreeLayout({
   // Gen 0: compacta y centrada en la persona foco
   packRow(orders.get(0) ?? [], new Map(), focusId);
 
-  // Ancestros: de abajo hacia arriba, cada quien sobre el centro de sus hijos
-  for (let g = -1; g >= minGen; g--) {
-    const order = orders.get(g);
-    if (!order) continue;
+  // Objetivo de cada persona: el centro de sus hijos (pasada hacia arriba) o el punto medio
+  // de sus progenitores (pasada hacia abajo).
+  const kidsTargets = (g: number) => {
     const targets = new Map<string, number>();
-    for (const id of order) {
-      const kidCenters = getChildren(id)
-        .filter((c) => genOf(c) === g + 1 && centers.has(c))
-        .map((c) => centers.get(c)!);
-      if (kidCenters.length > 0) targets.set(id, (Math.min(...kidCenters) + Math.max(...kidCenters)) / 2);
+    for (const id of orders.get(g) ?? []) {
+      // Por cada grupo de hijos (por unión): con pareja en la fila, el punto medio de la pareja
+      // debe caer sobre los hijos, así que la persona apunta al "espejo" de su pareja.
+      const byCoParent = new Map<string, number[]>();
+      for (const c of getChildren(id)) {
+        if (genOf(c) !== g + 1 || !centers.has(c)) continue;
+        const co = getParents(c).find((p) => p !== id && genOf(p) === g && centers.has(p)) ?? "";
+        byCoParent.set(co, [...(byCoParent.get(co) ?? []), centers.get(c)!]);
+      }
+      const desired: number[] = [];
+      byCoParent.forEach((kidCenters, co) => {
+        const mid = (Math.min(...kidCenters) + Math.max(...kidCenters)) / 2;
+        if (!co) return desired.push(mid);
+        const half = Math.max(STEP / 2, Math.abs(centers.get(id)! - centers.get(co)!) / 2);
+        desired.push(centers.get(id)! < centers.get(co)! ? mid - half : mid + half);
+      });
+      if (desired.length > 0) targets.set(id, mean(desired));
     }
-    packRow(order, targets);
-  }
-
-  // Descendientes: de arriba hacia abajo, cada quien bajo el punto medio de sus progenitores
-  for (let g = 1; g <= maxGen; g++) {
-    const order = orders.get(g);
-    if (!order) continue;
+    return targets;
+  };
+  const parentsTargets = (g: number) => {
     const targets = new Map<string, number>();
-    for (const id of order) {
+    for (const id of orders.get(g) ?? []) {
       const parentCenters = getParents(id)
         .filter((p) => genOf(p) === g - 1 && centers.has(p))
         .map((p) => centers.get(p)!);
       if (parentCenters.length > 0) targets.set(id, mean(parentCenters));
     }
-    packRow(order, targets);
+    return targets;
+  };
+  const upPass = (fromGen: number) => {
+    for (let g = fromGen; g >= minGen; g--) if (orders.has(g)) packRow(orders.get(g)!, kidsTargets(g));
+  };
+  // De arriba hacia abajo en TODAS las filas (también la del foco y la de los padres):
+  // cada grupo de hijos bajo el punto medio de sus progenitores (invariante #7).
+  const downPass = () => {
+    for (let g = minGen + 1; g <= maxGen; g++) {
+      if (orders.has(g)) packRow(orders.get(g)!, parentsTargets(g), g === 0 ? focusId : undefined);
+    }
+  };
+
+  // Ancestros sobre la fila del foco compacta; luego se alterna para que, si una fila de hijos
+  // es más ancha que la de sus padres, los padres se separen y los hijos queden centrados.
+  // La última pasada siempre es hacia abajo: manda que cada hijo esté bajo sus padres.
+  upPass(-1);
+  for (let i = 0; i < LAYOUT_ITERATIONS; i++) {
+    downPass();
+    upPass(maxGen - 1);
   }
+  downPass();
 
   // Filas sin ordenar (generaciones desconectadas) como respaldo
   for (const g of gens) {
@@ -527,8 +581,11 @@ export function computeTreeLayout({
     packRow(order, new Map());
   }
 
+  // El foco vuelve a x = 0 (el canvas centra la vista ahí)
+  const focusShift = centers.get(focusId) ?? 0;
+
   for (const n of nodes) {
-    const cx = centers.get(n.id) ?? 0;
+    const cx = (centers.get(n.id) ?? 0) - focusShift;
     result.set(n.id, {
       x: cx - W / 2,
       y: (n.generation - minGen) * (TREE_LAYOUT.NODE_HEIGHT + TREE_LAYOUT.GAP_Y),

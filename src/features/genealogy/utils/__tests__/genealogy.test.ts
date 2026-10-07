@@ -240,6 +240,31 @@ describe("acomodo visual del árbol", () => {
     expect(Math.abs(center("gala") - mid("kiko", "nora"))).toBeLessThanOrEqual(TREE_LAYOUT.NODE_WIDTH);
   });
 
+  // Fixture extremo (varias familias ensambladas cruzadas): los hijos de una pareja quedan a
+  // menos de una tarjeta de su punto medio. Los hijos "solo de" alguien que además tiene hijos
+  // con su pareja (p. ej. leo, solo de pedro) compiten por el mismo espacio y se excluyen.
+  it("en todas las filas, cada pareja tiene a sus hijos a menos de una tarjeta de su punto medio", () => {
+    const center = (id: string) => x(id) + TREE_LAYOUT.NODE_WIDTH / 2;
+    const groups = new Map<string, { parents: string[]; kids: string[] }>();
+    for (const id of nodeIds) {
+      const parents = edges
+        .filter((e) => e.type === "parent-child" && e.targetId === id)
+        .map((e) => e.sourceId)
+        .sort();
+      if (parents.length < 2) continue;
+      const key = parents.join("_");
+      groups.set(key, { parents, kids: [...(groups.get(key)?.kids ?? []), id] });
+    }
+    const offsets = [...groups.entries()].map(([key, { parents, kids }]) => {
+      const parentMid = parents.reduce((s, p) => s + center(p), 0) / parents.length;
+      const kidXs = kids.map(center);
+      const kidMid = (Math.min(...kidXs) + Math.max(...kidXs)) / 2;
+      return [key, Math.round(Math.abs(kidMid - parentMid))] as const;
+    });
+    const off = offsets.filter(([, d]) => d > TREE_LAYOUT.NODE_WIDTH);
+    expect(off).toEqual([]);
+  });
+
   it("los medios hermanos quedan del lado de su progenitor compartido", () => {
     expect(x("mia")).toBeLessThan(x("ism"));
     expect(x("nico")).toBeGreaterThan(x("ism"));
@@ -313,4 +338,44 @@ describe("acomodo: casos límite", () => {
 
 it("las identidades de fixtures son únicas", () => {
   expect(new Set(ALL_IDS).size).toBe(ALL_IDS.length);
+});
+
+describe("acomodo: hijos centrados bajo sus padres (árbol real de la captura)", () => {
+  // Juan+Audelia → Luis, Everardo, Ivan · Audelia+Mason → Sixto, Rubi · Miguel+Esthela → Jorge, Ana, Miguel Ángel
+  // Luis+Eva → Rosita · Sixto+Juanis → Waldo · Rubi+Jorge → Jorge Jr, Ismael · Ana+Roberto → Brian, Laura
+  const gen: Record<string, number> = {
+    juan: -2, aud: -2, mason: -2, miguel: -2, esthela: -2,
+    eva: -1, luis: -1, everardo: -1, ivan: -1, juanis: -1, sixto: -1, rubi: -1, jorge: -1, ana: -1, roberto: -1, miguelangel: -1,
+    rosita: 0, waldo: 0, jorgejr: 0, ism: 0, brian: 0, laura: 0,
+  };
+  const female = new Set(["aud", "esthela", "eva", "juanis", "rubi", "ana", "rosita", "laura"]);
+  const kids: [string[], string[]][] = [
+    [["juan", "aud"], ["luis", "everardo", "ivan"]],
+    [["aud", "mason"], ["sixto", "rubi"]],
+    [["miguel", "esthela"], ["jorge", "ana", "miguelangel"]],
+    [["luis", "eva"], ["rosita"]],
+    [["sixto", "juanis"], ["waldo"]],
+    [["rubi", "jorge"], ["jorgejr", "ism"]],
+    [["ana", "roberto"], ["brian", "laura"]],
+  ];
+  const edges = [
+    ...kids.flatMap(([ps, cs]) => ps.flatMap((p) => cs.map((c) => ({ sourceId: p, targetId: c, type: "parent-child" as const })))),
+    ...kids.map(([[a, b]]) => ({ sourceId: a, targetId: b, type: "union" as const })),
+  ];
+  const pos = computeTreeLayout({
+    nodes: Object.keys(gen).map((id) => ({ id, generation: gen[id], gender: female.has(id) ? "female" : "male", firstName: id })),
+    edges,
+    focusId: "ism",
+  });
+  const center = (id: string) => pos.get(id)!.x + TREE_LAYOUT.NODE_WIDTH / 2;
+
+  it.each(kids.map(([ps, cs]) => [ps.join("+"), ps, cs] as const))("hijos de %s centrados", (_, ps, cs) => {
+    const parentMid = (center(ps[0]) + center(ps[1])) / 2;
+    const xs = cs.map(center);
+    expect(Math.abs((Math.min(...xs) + Math.max(...xs)) / 2 - parentMid)).toBeLessThanOrEqual(2);
+  });
+
+  it("la persona foco queda en x = 0", () => {
+    expect(center("ism")).toBe(0);
+  });
 });
