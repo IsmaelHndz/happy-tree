@@ -250,6 +250,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           group,
           children,
           parentMidX,
+          parentMaxY,
           dropStartY,
           busY,
           busStartX: Math.min(...childXs, parentMidX),
@@ -385,11 +386,13 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
         {/* Capa de Aristas SVG */}
         <svg className="overflow-visible pointer-events-none absolute top-0 left-0">
           {/* Horquillas genealógicas: unión (corazón) -> barra de hermanos -> hijos */}
-          {buses.map(({ group, children, parentMidX, dropStartY, busY, busStartX, busEndX }) => {
+          {buses.map(({ group, children, parentMidX, parentMaxY, dropStartY, busY, busStartX, busEndX }) => {
             const color = group.color;
             const dimmed = highlightedIds !== null && !group.childIds.some((c) => highlightedIds.has(c));
             const labelWidth = group.label ? group.label.length * 6 + 16 : 0;
-            const labelY = (dropStartY + busY) / 2;
+            // En el espacio libre entre el borde inferior de las tarjetas y la barra de hermanos:
+            // las tarjetas se dibujan encima de las líneas y tapaban la etiqueta.
+            const labelY = (parentMaxY + busY) / 2;
             return (
               <g
                 key={`pc-group-${group.key}`}
