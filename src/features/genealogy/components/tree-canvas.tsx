@@ -10,7 +10,7 @@ import { TreeSearchModal } from "./tree-search-modal";
 import { TREE_LAYOUT } from "../utils/tree-layout";
 import { relativesOf } from "../utils/person-display";
 import { DEFAULT_TREE_SCOPE, saveTreeScope, TREE_SCOPE_OPTIONS, type TreeScope } from "../utils/tree-scope";
-import { buildTreeScene } from "../utils/tree-scene";
+import { buildTreeScene, busSegments } from "../utils/tree-scene";
 import { centerOn, fitToBounds, pinch, zoomAt, type View } from "../utils/viewport";
 import { PersonCard } from "./person-card";
 import { PersonDetailsPanel } from "./person-details-panel";
@@ -308,7 +308,9 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                 <g key={`pc-group-${bus.key}`} opacity={bus.isDimmed ? 0.15 : 1} style={{ transition: "opacity 0.2s" }}>
                   <line x1={bus.parentMidX} y1={bus.dropStartY} x2={bus.parentMidX} y2={bus.busY} stroke={bus.color} strokeWidth="2.5" strokeLinecap="round" />
                   <circle cx={bus.parentMidX} cy={bus.busY} r="3" fill={bus.color} />
-                  <line x1={bus.busStartX} y1={bus.busY} x2={bus.busEndX} y2={bus.busY} stroke={bus.color} strokeWidth="2.5" strokeLinecap="round" />
+                  {busSegments(bus).map(([x1, x2]) => (
+                    <line key={x1} x1={x1} y1={bus.busY} x2={x2} y2={bus.busY} stroke={bus.color} strokeWidth="2.5" strokeLinecap="round" />
+                  ))}
                   {bus.children.map((child) => (
                     <g key={`stub-${child.id}`}>
                       <line x1={child.x} y1={bus.busY} x2={child.x} y2={child.topY} stroke={bus.color} strokeWidth="2.5" strokeLinecap="round" />

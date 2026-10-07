@@ -36,6 +36,22 @@ export interface SceneBus {
   busStartX: number;
   busEndX: number;
   children: { id: string; x: number; topY: number }[];
+  // X donde una línea vertical de otra familia atraviesa esta barra: se dibuja un "puente"
+  gaps: number[];
+}
+
+const GAP_HALF = 6;
+
+/** Tramos de la barra horizontal, interrumpida en cada cruce para que no parezca conectada. */
+export function busSegments(bus: Pick<SceneBus, "busStartX" | "busEndX" | "gaps">): [number, number][] {
+  const segments: [number, number][] = [];
+  let from = bus.busStartX;
+  for (const gap of [...bus.gaps].sort((a, b) => a - b)) {
+    if (gap - GAP_HALF > from) segments.push([from, gap - GAP_HALF]);
+    from = Math.max(from, gap + GAP_HALF);
+  }
+  if (from < bus.busEndX) segments.push([from, bus.busEndX]);
+  return segments;
 }
 
 export interface SceneUnion {
@@ -134,7 +150,7 @@ export function buildTreeScene({
     };
   });
 
-  const buses: SceneBus[] = staggerBusRows(
+  const rawBuses = staggerBusRows(
     groups.flatMap((group) => {
       const parents = group.parentIds.map((id) => nodeMap.get(id)!).filter(Boolean);
       const children = group.childIds.map((id) => nodeMap.get(id)!).filter(Boolean);
@@ -160,10 +176,23 @@ export function buildTreeScene({
           busStartX: Math.min(...childXs, parentMidX),
           busEndX: Math.max(...childXs, parentMidX),
           children: children.map((c) => ({ id: c.id, x: c.x! + W / 2, topY: c.y! })),
+          gaps: [] as number[],
         },
       ];
     })
   );
+
+  // Cruces: bajadas y ramales verticales de una familia que atraviesan la barra de otra
+  const verticals = rawBuses.flatMap((b) => [
+    { key: b.key, x: b.parentMidX, y1: b.dropStartY, y2: b.busY },
+    ...b.children.map((c) => ({ key: b.key, x: c.x, y1: b.busY, y2: c.topY })),
+  ]);
+  const buses: SceneBus[] = rawBuses.map((b) => ({
+    ...b,
+    gaps: verticals
+      .filter((v) => v.key !== b.key && v.y1 < b.busY - 1 && v.y2 > b.busY + 1 && v.x > b.busStartX + 1 && v.x < b.busEndX - 1)
+      .map((v) => v.x),
+  }));
 
   const unions: SceneUnion[] = unionEdges.map((edge) => {
     const source = nodeMap.get(edge.sourceId)!;

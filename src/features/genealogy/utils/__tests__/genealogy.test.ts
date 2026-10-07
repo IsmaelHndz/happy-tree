@@ -464,3 +464,41 @@ describe("línea directa completa en el árbol propio", () => {
     expect(kin("bisa").explanation).toBe("Madre de abuela");
   });
 });
+
+describe("acomodo: cada miembro de una pareja del lado de su propia familia", () => {
+  // Caso de Lyndsay: sus abuelos paternos Jose de Jesus y Juana. Los padres de Juana (Apolinar y
+  // Secundina) y los de Jose (Prieta y "el mocho", con más hijos) no deben cruzar sus líneas.
+  const gen: Record<string, number> = {
+    apolinar: -3, secundina: -3, prieta: -3, mocho: -3,
+    jose: -2, juana: -2, maria: -2, martin: -2, pancho: -2, joseluis: -2,
+    juan: -1, ana: -1,
+    lyndsay: 0,
+  };
+  const female = new Set(["secundina", "prieta", "juana", "maria", "ana", "lyndsay"]);
+  const pc = (p: string, ...cs: string[]) => cs.map((c) => ({ sourceId: p, targetId: c, type: "parent-child" as const }));
+  const u = (a: string, b: string) => ({ sourceId: a, targetId: b, type: "union" as const });
+  const edges = [
+    ...pc("apolinar", "juana"), ...pc("secundina", "juana"),
+    ...pc("prieta", "jose", "maria", "martin", "pancho", "joseluis"), ...pc("mocho", "jose", "maria", "martin", "pancho"),
+    ...pc("jose", "juan"), ...pc("juana", "juan"), ...pc("juan", "lyndsay"), ...pc("ana", "lyndsay"),
+    u("apolinar", "secundina"), u("prieta", "mocho"), u("jose", "juana"), u("juan", "ana"),
+  ];
+  const pos = computeTreeLayout({
+    nodes: Object.keys(gen).map((id) => ({ id, generation: gen[id], gender: female.has(id) ? "female" : "male", firstName: id })),
+    edges,
+    focusId: "lyndsay",
+  });
+  const x = (id: string) => pos.get(id)!.x;
+  const mid = (a: string, b: string) => (x(a) + x(b)) / 2;
+
+  it("cada uno queda del lado de sus padres", () => {
+    const juanaLeft = x("juana") < x("jose");
+    const herParentsLeft = mid("apolinar", "secundina") < mid("prieta", "mocho");
+    expect(juanaLeft).toBe(herParentsLeft);
+  });
+
+  it("los hermanos de Jose quedan del lado de Jose, no del de Juana", () => {
+    const joseSide = Math.sign(x("jose") - x("juana"));
+    for (const sib of ["maria", "martin", "pancho"]) expect([sib, Math.sign(x(sib) - x("juana"))]).toEqual([sib, joseSide]);
+  });
+});

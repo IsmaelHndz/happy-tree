@@ -420,6 +420,37 @@ export function computeTreeLayout({
     orders.set(g, orderByBarycenter(g, ref, getParents));
   }
 
+  // --- Parejas: cada miembro del lado de su propia familia ---------------------
+  // Si los padres de A están a la derecha de los de B en la fila de arriba, A va a la derecha
+  // de B; si no, las líneas de ambas familias se cruzan (p. ej. abuelos paternos cuyos
+  // padres quedaron en lados opuestos). Solo parejas sin otra pareja en la fila, y nunca
+  // los padres del foco (invariante #3: madre a la izquierda, padre a la derecha).
+  for (let g = minGen + 1; g <= maxGen; g++) {
+    const order = orders.get(g);
+    const above = orders.get(g - 1);
+    if (!order || !above) continue;
+    const indexAbove = new Map(above.map((id, i) => [id, i]));
+    const parentsCenter = (id: string) => {
+      const idx = getParents(id)
+        .map((p) => indexAbove.get(p))
+        .filter((v): v is number => v !== undefined);
+      return idx.length > 0 ? mean(idx) : null;
+    };
+    const partnersInRow = (id: string) => getPartners(id).filter((p) => order.includes(p));
+    for (let i = 0; i + 1 < order.length; i++) {
+      const [a, b] = [order[i], order[i + 1]];
+      if (!getPartners(a).includes(b)) continue;
+      if ((a === motherId && b === fatherId) || (a === fatherId && b === motherId)) continue;
+      if (partnersInRow(a).length !== 1 || partnersInRow(b).length !== 1) continue;
+      const ca = parentsCenter(a);
+      const cb = parentsCenter(b);
+      if (ca === null || cb === null || ca <= cb) continue;
+      order[i] = b;
+      order[i + 1] = a;
+      i++;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Coordenadas: empaquetado con objetivos + fusión de bloques (PAVA)
   // ---------------------------------------------------------------------------

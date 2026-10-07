@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildTreeScene } from "../tree-scene";
+import { buildTreeScene, busSegments } from "../tree-scene";
 import { buildTreeSvg, escapeXml, wrapName } from "../tree-svg";
-import { TREE_LAYOUT } from "../tree-layout";
+import { computeTreeLayout, TREE_LAYOUT } from "../tree-layout";
 import type { FamilyGraphData, TreeNodeData } from "../../types/graph.types";
 
 const node = (id: string, firstName: string, x: number, y: number, extra: Partial<TreeNodeData> = {}): TreeNodeData => ({
@@ -91,5 +91,45 @@ describe("árbol en SVG para el PDF", () => {
     });
     // WinAnsi (Windows-1252): sin "≠", "♥", "✓" ni emojis
     expect(svg).not.toMatch(/[≠♥✓\u{1F300}-\u{1FAFF}]/u);
+  });
+});
+
+describe("puentes donde una línea cruza la barra de otra familia", () => {
+  it("la barra se interrumpe alrededor de cada cruce", () => {
+    expect(busSegments({ busStartX: 0, busEndX: 100, gaps: [50] })).toEqual([[0, 44], [56, 100]]);
+    expect(busSegments({ busStartX: 0, busEndX: 100, gaps: [] })).toEqual([[0, 100]]);
+    expect(busSegments({ busStartX: 0, busEndX: 100, gaps: [70, 30] })).toEqual([[0, 24], [36, 64], [76, 100]]);
+  });
+
+  it("toda línea que atraviesa la barra de otra familia lleva puente", () => {
+    // Prieta tiene hijos con "el mocho" y a Jose Luis sola; Jose Luis queda entre sus medios hermanos
+    const people: [string, number, "male" | "female"][] = [
+      ["prieta", -1, "female"], ["mocho", -1, "male"], ["a", 0, "male"], ["b", 0, "female"], ["joseluis", 0, "male"], ["c", 0, "male"],
+    ];
+    const edges = [
+      ...["a", "b", "joseluis", "c"].map((c, i) => ({ id: `p${i}`, sourceId: "prieta", targetId: c, type: "parent-child" as const })),
+      ...["a", "b", "c"].map((c, i) => ({ id: `m${i}`, sourceId: "mocho", targetId: c, type: "parent-child" as const })),
+      { id: "u", sourceId: "prieta", targetId: "mocho", type: "union" as const, unionType: "married" as const },
+    ];
+    const pos = computeTreeLayout({ nodes: people.map(([id, generation, gender]) => ({ id, generation, gender })), edges, focusId: "a" });
+    const g: FamilyGraphData = {
+      ...graph,
+      nodes: people.map(([id, , gender]) => node(id, id, pos.get(id)!.x, pos.get(id)!.y, { gender })),
+      edges,
+      focusPerson: { ...graph.focusPerson, id: "a" },
+    };
+    const scene = buildTreeScene({ graph: g, hideSiblingSpouses: true, activeBranchKey: null });
+    const shared = scene.buses.find((b) => b.key === "mocho_prieta")!;
+    const solo = scene.buses.find((b) => b.key === "prieta")!;
+    expect(shared && solo).toBeTruthy();
+    // Ninguna línea de la pareja atraviesa sin puente la barra de Prieta sola, y viceversa
+    for (const bus of scene.buses) {
+      for (const other of scene.buses.filter((o) => o.key !== bus.key)) {
+        for (const x of [other.parentMidX, ...other.children.map((c) => c.x)]) {
+          const verticalSpans = (x === other.parentMidX ? other.dropStartY : other.busY) < bus.busY && (x === other.parentMidX ? other.busY : other.children.find((c) => c.x === x)!.topY) > bus.busY;
+          if (verticalSpans && x > bus.busStartX + 1 && x < bus.busEndX - 1) expect(bus.gaps).toContain(x);
+        }
+      }
+    }
   });
 });

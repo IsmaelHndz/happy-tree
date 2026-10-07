@@ -4,7 +4,7 @@
 // (corazón, pastel, insignias, "≠") se dibujan como trazos.
 import { formatFullName } from "../types";
 import { TREE_LAYOUT } from "./tree-layout";
-import type { TreeScene } from "./tree-scene";
+import { busSegments, type TreeScene } from "./tree-scene";
 import { ageLabel, personStatus } from "./person-display";
 
 export type PdfTheme = "light" | "dark";
@@ -154,7 +154,7 @@ export function buildTreeSvg(scene: TreeScene, { theme, title, subtitle }: TreeS
     const c = p.lineColor(bus.color);
     out.push(`<g${op(bus.isDimmed)} stroke="${c}" stroke-width="2.5" stroke-linecap="round" fill="none">`);
     out.push(`<line x1="${bus.parentMidX}" y1="${bus.dropStartY}" x2="${bus.parentMidX}" y2="${bus.busY}"/>`);
-    out.push(`<line x1="${bus.busStartX}" y1="${bus.busY}" x2="${bus.busEndX}" y2="${bus.busY}"/>`);
+    for (const [x1, x2] of busSegments(bus)) out.push(`<line x1="${x1}" y1="${bus.busY}" x2="${x2}" y2="${bus.busY}"/>`);
     for (const child of bus.children) {
       out.push(`<line x1="${child.x}" y1="${bus.busY}" x2="${child.x}" y2="${child.topY}"/>`);
     }
