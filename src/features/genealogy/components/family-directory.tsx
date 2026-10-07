@@ -3,27 +3,22 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { FamilyMemberItem } from "../types";
-import { formatFullName, calculateAge } from "../types";
+import { formatFullName } from "../types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { EndorsementsManagerModal } from "@/features/genealogy/components/endorsements-manager-modal";
 import { convertUnionToSocialAction } from "@/features/genealogy/actions";
-import {
-  Users,
-  ShieldCheck,
-  Clock,
-  KeyRound,
-  Pencil,
-  UserPlus,
-  Cake,
-  Loader2,
-  CheckCircle2,
-  AlertCircle,
-} from "lucide-react";
+import { Users, ShieldCheck, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { PersonCard } from "./person-card";
+import { PersonDetailsPanel } from "./person-details-panel";
+import { relativesOf } from "../utils/person-display";
+import { DEFAULT_LINE_COLOR, ROOT_STRIPE_COLOR } from "../utils/sibling-groups";
 
 // Uniones que pueden pasar a ser amistad o noviazgo (no matrimonios vigentes)
 const CONVERTIBLE_UNIONS = new Set(["partner", "separated", "divorced"]);
+// Franja verde para la familia directa, gris para el resto (como en el árbol)
+const DIRECT_CATEGORIES = new Set(["self", "parent", "child", "sibling", "spouse"]);
 
 interface FamilyDirectoryProps {
   members: FamilyMemberItem[];
@@ -46,6 +41,39 @@ export function FamilyDirectory({
   const [convertingId, setConvertingId] = useState<string | null>(null);
   const [convertBusy, setConvertBusy] = useState(false);
   const [convertResult, setConvertResult] = useState<{ ok: boolean; text: string } | null>(null);
+  // Persona abierta en el panel lateral de detalles
+  const [detailsId, setDetailsId] = useState<string | null>(null);
+
+  const membersById = new Map(members.map((m) => [m.id, m]));
+  const detailsMember = detailsId ? membersById.get(detailsId) ?? null : null;
+  const canAddTo = (m: FamilyMemberItem) =>
+    !m.isClaimed || isUserZero || m.relationshipCategory === "self" || Boolean(currentPerspectiveId && m.id === currentPerspectiveId);
+
+  // Relaciones conocidas por el directorio, para el panel de detalles
+  const knownNames = new Map<string, string>();
+  const directoryParentEdges: { parentId: string; childId: string }[] = [];
+  const seenEdges = new Set<string>();
+  const addParentEdge = (parentId: string, childId: string) => {
+    const key = `${parentId}>${childId}`;
+    if (seenEdges.has(key)) return;
+    seenEdges.add(key);
+    directoryParentEdges.push({ parentId, childId });
+  };
+  const directoryUnions: { personAId: string; personBId: string; unionType?: string | null }[] = [];
+  for (const m of members) {
+    knownNames.set(m.id, formatFullName(m));
+    for (const pc of m.parentConnections ?? []) {
+      if (!knownNames.has(pc.parentId)) knownNames.set(pc.parentId, pc.parentName);
+      addParentEdge(pc.parentId, m.id);
+    }
+    for (const cc of m.childConnections ?? []) {
+      if (!knownNames.has(cc.childId)) knownNames.set(cc.childId, cc.childName);
+      addParentEdge(m.id, cc.childId);
+    }
+    if (m.unionInfo) {
+      directoryUnions.push({ personAId: m.id, personBId: m.unionInfo.partnerId, unionType: m.unionInfo.unionType });
+    }
+  }
 
   const convertToSocial = async (member: FamilyMemberItem, kind: "friend" | "dating") => {
     if (!member.unionInfo) return;
@@ -188,201 +216,100 @@ export function FamilyDirectory({
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredMembers.map((member) => {
-            const isFemale = member.gender === "female";
-            const isMale = member.gender === "male";
-            const initials = `${member.firstName.charAt(0)}${member.lastName.charAt(0)}`.toUpperCase();
-            const age = calculateAge(member.birthDate, member.deathDate);
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-4">
+          {filteredMembers.map((member) => (
+            <PersonCard
+              key={member.id}
+              person={member}
+              stripeColor={DIRECT_CATEGORIES.has(member.relationshipCategory) ? DEFAULT_LINE_COLOR : ROOT_STRIPE_COLOR}
+              isCenter={member.relationshipCategory === "self"}
+              isSelected={detailsId === member.id}
+              onOpenDetails={() => setDetailsId(member.id)}
+              onClick={() => setDetailsId(member.id)}
+              className="h-[176px]"
+            />
+          ))}
+        </div>
+      )}
 
-            return (
-              <div
-                key={member.id}
-                className="flex flex-col justify-between p-5 rounded-2xl bg-neutral-950/70 border border-neutral-800/80 hover:border-neutral-700/80 transition-all shadow-md group"
-              >
+      {/* Panel lateral de detalles */}
+      {detailsMember && (
+        <PersonDetailsPanel
+          key={detailsMember.id}
+          person={detailsMember}
+          family={relativesOf({
+            personId: detailsMember.id,
+            nameOf: (id) => knownNames.get(id),
+            parentEdges: directoryParentEdges,
+            unions: directoryUnions,
+          })}
+          onClose={() => {
+            setDetailsId(null);
+            setConvertingId(null);
+          }}
+          onSelectRelative={(id) => membersById.has(id) && setDetailsId(id)}
+          onViewTree={() => router.push(`/tree?focus=${detailsMember.id}`)}
+          onAddRelative={canAddTo(detailsMember) ? () => setActiveAddAnchor(detailsMember) : undefined}
+          onEdit={!detailsMember.isClaimed || isUserZero ? () => setActiveEditMember(detailsMember) : undefined}
+          onInvite={
+            detailsMember.isLiving && !detailsMember.isClaimed ? () => setActiveInviteMember(detailsMember) : undefined
+          }
+          extra={
+            <>
+              {detailsMember.isEndorsedByMe && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-300 bg-amber-950/60 border border-amber-800/40 px-2.5 py-1 rounded-full">
+                  <ShieldCheck className="w-3 h-3 text-amber-400" />
+                  Tú respaldas a esta persona
+                </span>
+              )}
+              {/* Noviazgo terminado registrado como pareja: pasarlo a Amigos */}
+              {detailsMember.unionInfo && CONVERTIBLE_UNIONS.has(detailsMember.unionInfo.unionType) && (
                 <div>
-                  {/* Fila Superior: Avatar, Nombre Completo y Rol */}
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
-                          isFemale
-                            ? "bg-pink-950 text-pink-300 border border-pink-800/60"
-                            : isMale
-                            ? "bg-blue-950 text-blue-300 border border-blue-800/60"
-                            : "bg-emerald-950 text-emerald-300 border border-emerald-800/60"
-                        }`}
-                      >
-                        {initials}
-                      </div>
-
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <h3 className="text-sm font-semibold text-white tracking-tight truncate">
-                            {formatFullName(member)}
-                          </h3>
-                          {isFemale ? (
-                            <span
-                              title="Mujer"
-                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[10px] shrink-0"
-                            >
-                              ♀
-                            </span>
-                          ) : (
-                            <span
-                              title="Hombre"
-                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-400 font-bold text-[10px] shrink-0"
-                            >
-                              ♂
-                            </span>
-                          )}
-                        </div>
-                        <span
-                          className={`text-[11px] font-medium ${
-                            isFemale ? "text-pink-400" : isMale ? "text-blue-400" : "text-emerald-400"
-                          }`}
+                  {convertingId === detailsMember.id ? (
+                    <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800 space-y-2">
+                      <p className="text-[11px] text-neutral-300">
+                        ¿Qué son ahora? Deja de aparecer como pareja en el árbol y pasa a tu lista de Amigos.
+                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => convertToSocial(detailsMember, "friend")}
+                          disabled={convertBusy}
+                          className="flex-1 px-2 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-[11px] font-semibold flex items-center justify-center gap-1"
                         >
-                          {member.relationshipLabel}
-                        </span>
+                          {convertBusy && <Loader2 className="w-3 h-3 animate-spin" />}
+                          Amigos
+                        </button>
+                        <button
+                          onClick={() => convertToSocial(detailsMember, "dating")}
+                          disabled={convertBusy}
+                          className="flex-1 px-2 py-1.5 rounded-lg bg-rose-800 hover:bg-rose-700 text-white text-[11px] font-semibold"
+                        >
+                          Novios
+                        </button>
+                        <button
+                          onClick={() => setConvertingId(null)}
+                          className="px-2 py-1.5 text-[11px] text-neutral-400 hover:text-white"
+                        >
+                          Cancelar
+                        </button>
                       </div>
                     </div>
-                  </div>
-
-                  {/* Estado de Reclamación / Vida */}
-                  <div className="mb-4">
-                    {member.isClaimed ? (
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-300 bg-emerald-950/60 border border-emerald-800/50 px-2.5 py-0.5 rounded-full">
-                          <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                          Reclamado &bull; Cuenta Activa
-                        </span>
-                        {member.isEndorsedByMe && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-mono text-amber-300 bg-amber-950/60 border border-amber-800/40 px-2 py-0.5 rounded-full">
-                            <ShieldCheck className="w-2.5 h-2.5 text-amber-400" />
-                            Respaldado
-                          </span>
-                        )}
-                      </div>
-                    ) : !member.isLiving ? (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-neutral-400 bg-neutral-950 border border-neutral-800 px-2.5 py-0.5 rounded-full">
-                        Ancestro / Fallecido
-                      </span>
-                    ) : member.invitationStatus === "pending" ? (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-300 bg-amber-950/60 border border-amber-800/50 px-2.5 py-0.5 rounded-full">
-                        <Clock className="w-3 h-3 text-amber-400" />
-                        Invitación Emitida
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-neutral-400 bg-neutral-950 border border-neutral-800 px-2.5 py-0.5 rounded-full">
-                        Sin Reclamar (Unclaimed)
-                      </span>
-                    )}
-                  </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setConvertResult(null);
+                        setConvertingId(detailsMember.id);
+                      }}
+                      className="text-[11px] text-sky-300 hover:text-sky-200"
+                    >
+                      ¿Fue un noviazgo? Pasar a amistad
+                    </button>
+                  )}
                 </div>
-
-                {/* Noviazgo terminado registrado como pareja: pasarlo a Amigos */}
-                {member.unionInfo && CONVERTIBLE_UNIONS.has(member.unionInfo.unionType) && (
-                  <div className="mb-3">
-                    {convertingId === member.id ? (
-                      <div className="p-3 rounded-xl bg-neutral-900 border border-neutral-800 space-y-2">
-                        <p className="text-[11px] text-neutral-300">
-                          ¿Qué son ahora? Deja de aparecer como pareja en el árbol y pasa a tu lista de Amigos.
-                        </p>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => convertToSocial(member, "friend")}
-                            disabled={convertBusy}
-                            className="flex-1 px-2 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-[11px] font-semibold flex items-center justify-center gap-1"
-                          >
-                            {convertBusy && <Loader2 className="w-3 h-3 animate-spin" />}
-                            Amigos
-                          </button>
-                          <button
-                            onClick={() => convertToSocial(member, "dating")}
-                            disabled={convertBusy}
-                            className="flex-1 px-2 py-1.5 rounded-lg bg-rose-800 hover:bg-rose-700 text-white text-[11px] font-semibold"
-                          >
-                            Novios
-                          </button>
-                          <button
-                            onClick={() => setConvertingId(null)}
-                            className="px-2 py-1.5 text-[11px] text-neutral-400 hover:text-white"
-                          >
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setConvertResult(null);
-                          setConvertingId(member.id);
-                        }}
-                        className="text-[11px] text-sky-300 hover:text-sky-200"
-                      >
-                        ¿Fue un noviazgo? Pasar a amistad
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Acciones & Edad Actual */}
-                <div className="pt-3 border-t border-neutral-800/60 flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
-                  <div className="flex items-center gap-1.5 text-xs text-neutral-400 font-medium shrink-0">
-                    {age !== null ? (
-                      <span
-                        title={member.isLiving ? "Edad actual" : "Edad al fallecer"}
-                        className="inline-flex items-center gap-1.5 text-xs text-neutral-400 font-medium"
-                      >
-                        <Cake className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                        <span>{age} {age === 1 ? "año" : "años"}</span>
-                      </span>
-                    ) : (
-                      <span className="text-xs text-neutral-600 font-mono" title="Fecha de nacimiento no registrada">—</span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                    {/* Botón para agregar familiares anclados a esta persona (Bloqueado para fichas de otros usuarios verificados) */}
-                    {(!member.isClaimed || isUserZero || member.relationshipCategory === "self" || (currentPerspectiveId && member.id === currentPerspectiveId)) && (
-                      <button
-                        onClick={() => setActiveAddAnchor(member)}
-                        title={`Añadir pariente respecto a ${member.firstName}`}
-                        className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-emerald-950/60 hover:bg-emerald-600 hover:text-white text-emerald-300 border border-emerald-800/50 rounded-lg transition whitespace-nowrap shrink-0"
-                      >
-                        <UserPlus className="w-3.5 h-3.5 shrink-0" />
-                        <span>Pariente</span>
-                      </button>
-                    )}
-
-                    {/* Solo se puede editar si la ficha NO ha sido reclamada (el Usuario Cero siempre puede, para soporte) */}
-                    {(!member.isClaimed || isUserZero) && (
-                      <button
-                        onClick={() => setActiveEditMember(member)}
-                        title="Editar ficha"
-                        className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-neutral-800/80 hover:bg-neutral-700 hover:text-white text-neutral-300 border border-neutral-700/60 rounded-lg transition whitespace-nowrap shrink-0"
-                      >
-                        <Pencil className="w-3.5 h-3.5 shrink-0" />
-                        <span>Editar</span>
-                      </button>
-                    )}
-
-                    {member.isLiving && !member.isClaimed && (
-                      <button
-                        onClick={() => setActiveInviteMember(member)}
-                        title={member.invitationStatus === "pending" ? "Ver enlace de invitación" : "Generar invitación criptográfica"}
-                        className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-neutral-800/80 hover:bg-emerald-600 hover:text-white text-neutral-200 border border-neutral-700/60 rounded-lg transition whitespace-nowrap shrink-0"
-                      >
-                        <KeyRound className="w-3.5 h-3.5 shrink-0" />
-                        <span>{member.invitationStatus === "pending" ? "Enlace" : "Invitar"}</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              )}
+            </>
+          }
+        />
       )}
 
       {/* Modal de Añadir Pariente Anclado */}
@@ -391,9 +318,7 @@ export function FamilyDirectory({
           key={activeAddAnchor.id}
           defaultAnchorId={activeAddAnchor.id}
           defaultAnchorName={formatFullName(activeAddAnchor)}
-          availableAnchors={members
-            .filter((m) => !m.isClaimed || isUserZero || m.relationshipCategory === "self" || (currentPerspectiveId && m.id === currentPerspectiveId))
-            .map((m) => ({ id: m.id, name: formatFullName(m) }))}
+          availableAnchors={members.filter(canAddTo).map((m) => ({ id: m.id, name: formatFullName(m) }))}
           isOpen={Boolean(activeAddAnchor)}
           onClose={() => setActiveAddAnchor(null)}
         />

@@ -26,7 +26,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
    - **Maternal Branch (Left)**: Maternal uncle spouse (outer left) $\rightarrow$ Maternal uncle $\rightarrow$ Mother (center-left).
    - **Paternal Branch (Right)**: Father (center-right) $\rightarrow$ Paternal uncle $\rightarrow$ Paternal uncle spouse (outer right).
    - Maternal and paternal branches MUST NOT cross or interleave. The mother and father are the central axis of Generation -1.
-4. **SVG Orthogonal Bus Bars**: Sibling groups share a horizontal bus bar spanning `[min(child.x) + 110, max(child.x) + 110]`. Parents connect to this bar with a single vertical drop line. Spouses display a heart icon (`<3`) centered between their nodes.
+4. **SVG Orthogonal Bus Bars**: Sibling groups share a horizontal bus bar spanning `[min(child.x) + NODE_WIDTH / 2, max(child.x) + NODE_WIDTH / 2]`. Parents connect to this bar with a single vertical drop line. Spouses display a heart icon (`<3`) centered between their nodes.
 5. **Claimed Profile Protection**: When `persons.is_claimed = true`, only the owner (`claimed_by_user_id === user.id`) can edit their personal data or add relations directly to their personal anchor. **Exception**: User Zero can edit data and relations of claimed profiles (support during development); deleting a claimed profile still requires "Liberar ficha" first.
 6. **Parental Lineage Integrity & Explicit Unions**:
    - Sibling registration must explicitly declare shared parentage (`'both' | 'maternal' | 'paternal'`). A sibling must ONLY be linked to the designated biological parent(s).
@@ -93,6 +93,8 @@ src/
 │   │   │   └── social-connections.ts # Friends/dating helpers (socialOnlyPersonIds)
 │   │   └── components/
 │   │       ├── tree-canvas.tsx         # Pan/Zoom SVG canvas, orthogonal bus bars, node rendering
+│   │       ├── person-card.tsx         # Portrait card (tree + directory): avatar, name, kinship, age; no actions
+│   │       ├── person-details-panel.tsx # Side panel: dates, notes, family, and every action (permission-gated)
 │   │       ├── tree-selector.tsx       # Dropdown: My Tree vs. Approved Friend Trees
 │   │       ├── tree-search-modal.tsx   # Cmd+K quick person search modal
 │   │       ├── family-directory.tsx    # Table/grid list of family members with status badges
@@ -218,8 +220,8 @@ To group relatives bilaterally without stack overflow:
 
 #### Phase 4: Coordinate Mapping & Descendant Clustering
 ```typescript
-const NODE_WIDTH = 220;
-const NODE_HEIGHT = 130;
+const NODE_WIDTH = 168;  // TREE_LAYOUT: portrait PersonCard
+const NODE_HEIGHT = 176;
 const GAP_X = 50;
 const GAP_Y = 150;
 const y = (gen - minGen) * (NODE_HEIGHT + GAP_Y);
@@ -257,8 +259,8 @@ Used to strictly verify if a requested `?focus=<personId>` is inside the user's 
 ### 5.3. SVG Canvas Orthogonal Interconnects (`tree-canvas.tsx`)
 
 1. **Sibling Bus Bars**:
-   - `busStartX = Math.min(...siblings.map(n => n.x)) + 110` (center of leftmost sibling).
-   - `busEndX = Math.max(...siblings.map(n => n.x)) + 110` (center of rightmost sibling).
+   - `busStartX = Math.min(...siblings.map(n => n.x)) + NODE_WIDTH / 2` (center of leftmost sibling).
+   - `busEndX = Math.max(...siblings.map(n => n.x)) + NODE_WIDTH / 2` (center of rightmost sibling).
    - `busY = siblings[0].y - 45`.
    - Single vertical trunk descends from parents to `busY`.
    - Vertical drop lines branch from `busY` directly into each sibling's top anchor `(node.x + 110, node.y)`.

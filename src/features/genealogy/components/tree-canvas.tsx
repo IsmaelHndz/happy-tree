@@ -7,6 +7,10 @@ import { InviteModal } from "@/features/invitations/components/invite-modal";
 import { EditMemberModal } from "@/features/genealogy/components/edit-member-modal";
 import { AddMemberModal } from "@/features/genealogy/components/add-member-modal";
 import { TreeSearchModal } from "./tree-search-modal";
+import { TREE_LAYOUT } from "../utils/tree-layout";
+import { relativesOf } from "../utils/person-display";
+import { PersonCard } from "./person-card";
+import { PersonDetailsPanel } from "./person-details-panel";
 import {
   buildFamilyBranches,
   buildSiblingGroups,
@@ -19,18 +23,12 @@ import { useRouter } from "next/navigation";
 import {
   ZoomIn,
   ZoomOut,
-  ShieldCheck,
-  Clock,
-  KeyRound,
-  CheckCircle,
-  Pencil,
   Compass,
   ArrowLeft,
   UserPlus,
   Eye,
   EyeOff,
   Search,
-  Sparkles,
 } from "lucide-react";
 
 interface TreeCanvasProps {
@@ -47,6 +45,8 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   const [activeInviteMember, setActiveInviteMember] = useState<TreeNodeData | null>(null);
   const [activeEditMember, setActiveEditMember] = useState<TreeNodeData | null>(null);
   const [activeAddAnchor, setActiveAddAnchor] = useState<TreeNodeData | null>(null);
+  // Persona abierta en el panel lateral de detalles
+  const [detailsPersonId, setDetailsPersonId] = useState<string | null>(null);
 
   // Modal de búsqueda / explorador de árboles (Cmd+K)
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -73,8 +73,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const NODE_WIDTH = 220;
-  const NODE_HEIGHT = 120;
+  const { NODE_WIDTH, NODE_HEIGHT } = TREE_LAYOUT;
 
   // Centrar el grafo en la pantalla al montar
   useEffect(() => {
@@ -129,6 +128,8 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
 
   // Zoom con la rueda del ratón
   const handleWheel = (e: React.WheelEvent) => {
+    // Sobre el panel de detalles u otros controles, la rueda desplaza ese contenido
+    if ((e.target as Element).closest(".tree-controls")) return;
     e.preventDefault();
     const zoomFactor = 1.1;
     const newScale = e.deltaY < 0 ? scale * zoomFactor : scale / zoomFactor;
@@ -163,6 +164,14 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
     }
     return true;
   });
+
+  const allNodesById = new Map(graph.nodes.map((n) => [n.id, n]));
+  const detailsPerson = detailsPersonId ? allNodesById.get(detailsPersonId) ?? null : null;
+  // Agregar familiares y editar: no en árboles ajenos ni en fichas reclamadas por otra cuenta
+  // (User Zero sí puede, para soporte; cada quien puede con su propia ficha).
+  const canChange = (n: TreeNodeData) =>
+    !graph.isViewerGuest &&
+    (!n.isClaimed || graph.isUserZero || n.id === graph.focusPerson.id || n.relationshipCategory === "self");
 
   const nodeMap = new Map<string, TreeNodeData>();
   filteredNodes.forEach((n) => nodeMap.set(n.id, n));
@@ -502,23 +511,23 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           })}
         </svg>
 
-        {/* Capa de Nodos HTML */}
+        {/* Capa de Nodos HTML: tarjetas tipo retrato */}
         {filteredNodes.map((node) => {
           if (node.x === undefined || node.y === undefined) return null;
-
-          const isCenter = node.id === graph.focusPerson.id;
-          const isFemale = node.gender === "female";
-          const isMale = node.gender === "male";
-          const initials = `${node.firstName[0] || ""}${node.lastName[0] || ""}`.toUpperCase();
           const childGroupKey = groupKeyOfChild.get(node.id);
           // Franja superior con el color de la familia de la que viene (gris si no hay padres visibles)
           const stripeColor = (childGroupKey && groupByKey.get(childGroupKey)?.color) || ROOT_STRIPE_COLOR;
-          const isDimmed = highlightedIds !== null && !highlightedIds.has(node.id);
           const nodeBranchKey = branchOfPerson.get(node.id);
-
           return (
-            <div
+            <PersonCard
               key={node.id}
+              person={node}
+              stripeColor={stripeColor}
+              isCenter={node.id === graph.focusPerson.id}
+              isDimmed={highlightedIds !== null && !highlightedIds.has(node.id)}
+              isSelected={detailsPersonId === node.id}
+              onOpenDetails={() => setDetailsPersonId(node.id)}
+              onClick={nodeBranchKey ? () => setActiveBranchKey(nodeBranchKey) : undefined}
               style={{
                 position: "absolute",
                 left: `${node.x}px`,
@@ -526,201 +535,7 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
                 width: `${NODE_WIDTH}px`,
                 height: `${NODE_HEIGHT}px`,
               }}
-              onClick={
-                nodeBranchKey
-                  ? (e) => {
-                      if ((e.target as HTMLElement).closest("button, a")) return;
-                      setActiveBranchKey(nodeBranchKey);
-                    }
-                  : undefined
-              }
-              className={`tree-node-card group p-3 rounded-2xl border transition-all shadow-xl backdrop-blur-md flex flex-col justify-between ${
-                nodeBranchKey ? "cursor-pointer" : "cursor-default"
-              } ${
-                isDimmed ? "opacity-20" : ""
-              } ${
-                isCenter
-                  ? "bg-gradient-to-br from-emerald-950/90 to-neutral-900 border-emerald-500/80 shadow-emerald-950/50 ring-2 ring-emerald-500/30"
-                  : isFemale
-                  ? "bg-neutral-900/90 border-neutral-800 hover:border-pink-500/50"
-                  : isMale
-                  ? "bg-neutral-900/90 border-neutral-800 hover:border-blue-500/50"
-                  : "bg-neutral-900/90 border-neutral-800 hover:border-neutral-700"
-              }`}
-            >
-              <span
-                aria-hidden
-                className="absolute top-0 left-4 right-4 h-[3px] rounded-full"
-                style={{ backgroundColor: stripeColor }}
-              />
-
-              {/* Encabezado del Nodo */}
-              <div className="flex items-start justify-between gap-1.5">
-                <div className="flex items-center gap-2 overflow-hidden">
-                  <div
-                    className={`w-7 h-7 rounded-xl font-bold text-xs flex items-center justify-center shrink-0 border relative ${
-                      isFemale
-                        ? "bg-gradient-to-tr from-pink-950 via-rose-900 to-pink-800 border-pink-500/50 text-pink-200"
-                        : isMale
-                        ? "bg-gradient-to-tr from-blue-950 via-indigo-900 to-blue-800 border-blue-500/50 text-blue-200"
-                        : "bg-neutral-800 border-neutral-700 text-neutral-300"
-                    }`}
-                  >
-                    {initials}
-                  </div>
-
-                  <div className="overflow-hidden">
-                    <div className="flex items-center gap-1 truncate">
-                      <h4
-                        className="text-xs font-bold text-white truncate leading-tight"
-                        title={formatFullName(node)}
-                      >
-                        {formatFullName(node)}
-                      </h4>
-                      {isFemale && (
-                        <span className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-pink-500/20 text-pink-400 font-bold text-[9px] shrink-0">
-                          ♀
-                        </span>
-                      )}
-                      {isMale && (
-                        <span className="inline-flex items-center justify-center w-3 h-3 rounded-full bg-blue-500/20 text-blue-400 font-bold text-[9px] shrink-0">
-                          ♂
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span
-                        className={`text-[10px] font-medium truncate block ${
-                          isFemale ? "text-pink-400" : isMale ? "text-blue-400" : "text-emerald-400"
-                        }`}
-                        title={node.relationshipExplanation || node.relationshipLabel}
-                      >
-                        {node.relationshipLabel}
-                      </span>
-                      {node.relationshipExplanation && !isCenter && (
-                        <span
-                          title={`Parentesco inferido: ${node.relationshipExplanation}`}
-                          className="cursor-help text-amber-400/80 hover:text-amber-300"
-                        >
-                          <Sparkles className="w-2.5 h-2.5" />
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  {isCenter && (
-                    <span className="text-[9px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      Centro
-                    </span>
-                  )}
-                  {/* Botón rápido para agregar pariente anclado a este nodo (Bloqueado para fichas de otros usuarios verificados) */}
-                  {!graph.isViewerGuest && (() => {
-                    const isSelfNode = node.id === graph.focusPerson.id || node.relationshipCategory === "self";
-                    if (node.isClaimed && !isSelfNode && !graph.isUserZero) return null;
-                    return (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveAddAnchor(node);
-                        }}
-                        title={`Añadir pariente anclado a ${node.firstName}`}
-                        className="p-1 text-neutral-400 hover:text-emerald-400 hover:bg-neutral-800 rounded-lg transition"
-                      >
-                        <UserPlus className="w-3 h-3" />
-                      </button>
-                    );
-                  })()}
-
-                  {/* Solo se puede editar si es su propia ficha personal (isSelf) O si es una ficha no reclamada */}
-                  {(() => {
-                    if (graph.isViewerGuest) return null;
-                    const isSelfNode = node.id === graph.focusPerson.id || node.relationshipCategory === "self";
-                    if (!isSelfNode && node.isClaimed && !graph.isUserZero) return null;
-                    return (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveEditMember(node);
-                        }}
-                        title={isSelfNode ? "Editar mi perfil" : "Editar ficha familiar"}
-                        className="p-1 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition"
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </button>
-                    );
-                  })()}
-                </div>
-              </div>
-
-              {/* Estado y Quorum */}
-              <div className="my-auto pt-0.5">
-                {node.isClaimed ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-300 bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 rounded-full">
-                    <ShieldCheck className="w-2.5 h-2.5 text-emerald-400" />
-                    <span>Reclamado</span>
-                  </span>
-                ) : !node.isLiving ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-neutral-400 bg-neutral-950 border border-neutral-800 px-2 py-0.5 rounded-full">
-                    <span>Fallecido</span>
-                  </span>
-                ) : node.invitationStatus === "pending" ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-300 bg-amber-950/60 border border-amber-800/40 px-2 py-0.5 rounded-full">
-                    <Clock className="w-2.5 h-2.5 text-amber-400" />
-                    <span>Invitado</span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-teal-300 bg-teal-950/60 border border-teal-800/40 px-2 py-0.5 rounded-full">
-                    <CheckCircle className="w-2.5 h-2.5 text-teal-400" />
-                    <span>Ficha Preliminar</span>
-                  </span>
-                )}
-              </div>
-
-              {/* Botones de Acción inferior */}
-              <div className="pt-1.5 border-t border-neutral-800/60 flex items-center justify-between">
-                <span className="text-[10px] text-neutral-500 font-mono">
-                  {node.birthDate ? node.birthDate.substring(0, 4) : "—"}
-                </span>
-
-                <div className="flex items-center gap-1">
-                  {/* Si no es el centro, botón para centrar y explorar su propio árbol */}
-                  {!isCenter && (
-                    <button
-                      onClick={() => {
-                        router.push(`/tree?focus=${node.id}`);
-                      }}
-                      title="Explorar árbol desde este familiar"
-                      className="flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-300 hover:text-white transition border border-neutral-700/60"
-                    >
-                      <Compass className="w-2.5 h-2.5 text-emerald-400" />
-                      <span>Ver árbol</span>
-                    </button>
-                  )}
-
-                  {/* Botón para añadirle parientes directamente a este nodo */}
-                  <button
-                    onClick={() => setActiveAddAnchor(node)}
-                    title={`Añadir pariente a ${node.firstName}`}
-                    className="p-1 text-neutral-400 hover:text-emerald-400 hover:bg-neutral-800 rounded transition"
-                  >
-                    <UserPlus className="w-3 h-3" />
-                  </button>
-
-                  {/* Invitar si está viva y sin reclamar */}
-                  {node.isLiving && !node.isClaimed && (
-                    <button
-                      onClick={() => setActiveInviteMember(node)}
-                      title="Generar invitación criptográfica"
-                      className="p-1 text-neutral-400 hover:text-teal-400 hover:bg-neutral-800 rounded transition"
-                    >
-                      <KeyRound className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
+            />
           );
         })}
       </div>
@@ -815,6 +630,39 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
           <span>Separados / Divorciados</span>
         </div>
       </div>
+
+      {/* Panel lateral de detalles */}
+      {detailsPerson && (
+        <PersonDetailsPanel
+          key={detailsPerson.id}
+          person={detailsPerson}
+          family={relativesOf({
+            personId: detailsPerson.id,
+            nameOf: (id) => {
+              const n = allNodesById.get(id);
+              return n ? formatFullName(n) : undefined;
+            },
+            parentEdges: graph.edges
+              .filter((e) => e.type === "parent-child")
+              .map((e) => ({ parentId: e.sourceId, childId: e.targetId })),
+            unions: graph.edges
+              .filter((e) => e.type === "union")
+              .map((e) => ({ personAId: e.sourceId, personBId: e.targetId, unionType: e.unionType })),
+          })}
+          onClose={() => setDetailsPersonId(null)}
+          onSelectRelative={(id) => setDetailsPersonId(id)}
+          onViewTree={
+            detailsPerson.id !== graph.focusPerson.id ? () => router.push(`/tree?focus=${detailsPerson.id}`) : undefined
+          }
+          onAddRelative={canChange(detailsPerson) ? () => setActiveAddAnchor(detailsPerson) : undefined}
+          onEdit={canChange(detailsPerson) ? () => setActiveEditMember(detailsPerson) : undefined}
+          onInvite={
+            !graph.isViewerGuest && detailsPerson.isLiving && !detailsPerson.isClaimed
+              ? () => setActiveInviteMember(detailsPerson)
+              : undefined
+          }
+        />
+      )}
 
       {/* Modal de Edición */}
       {activeEditMember && (

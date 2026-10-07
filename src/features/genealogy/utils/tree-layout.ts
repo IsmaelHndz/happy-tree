@@ -35,9 +35,10 @@
  * Todo es iterativo O(V + E) por fila; no hay recursión (ver Pitfall 1 en AGENTS.md).
  */
 
+// Tarjeta tipo retrato (PersonCard): angosta para que el árbol crezca menos a los lados
 export const TREE_LAYOUT = {
-  NODE_WIDTH: 220,
-  NODE_HEIGHT: 130,
+  NODE_WIDTH: 168,
+  NODE_HEIGHT: 176,
   GAP_X: 50,
   GAP_Y: 150,
 } as const;
