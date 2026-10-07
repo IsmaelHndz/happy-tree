@@ -346,13 +346,14 @@ describe("acomodo: hijos centrados bajo sus padres (árbol real de la captura)",
   const gen: Record<string, number> = {
     juan: -2, aud: -2, mason: -2, miguel: -2, esthela: -2,
     eva: -1, luis: -1, everardo: -1, ivan: -1, juanis: -1, sixto: -1, rubi: -1, jorge: -1, ana: -1, roberto: -1, miguelangel: -1,
+    ruben: -1, analilia: -1,
     rosita: 0, waldo: 0, jorgejr: 0, ism: 0, brian: 0, laura: 0,
   };
-  const female = new Set(["aud", "esthela", "eva", "juanis", "rubi", "ana", "rosita", "laura"]);
+  const female = new Set(["aud", "esthela", "eva", "juanis", "rubi", "ana", "rosita", "laura", "analilia"]);
   const kids: [string[], string[]][] = [
     [["juan", "aud"], ["luis", "everardo", "ivan"]],
     [["aud", "mason"], ["sixto", "rubi"]],
-    [["miguel", "esthela"], ["jorge", "ana", "miguelangel"]],
+    [["miguel", "esthela"], ["jorge", "ruben", "ana", "miguelangel"]],
     [["luis", "eva"], ["rosita"]],
     [["sixto", "juanis"], ["waldo"]],
     [["rubi", "jorge"], ["jorgejr", "ism"]],
@@ -361,6 +362,8 @@ describe("acomodo: hijos centrados bajo sus padres (árbol real de la captura)",
   const edges = [
     ...kids.flatMap(([ps, cs]) => ps.flatMap((p) => cs.map((c) => ({ sourceId: p, targetId: c, type: "parent-child" as const })))),
     ...kids.map(([[a, b]]) => ({ sourceId: a, targetId: b, type: "union" as const })),
+    // Miguel Ángel y Ana Lilia: pareja sin hijos
+    { sourceId: "miguelangel", targetId: "analilia", type: "union" as const },
   ];
   const pos = computeTreeLayout({
     nodes: Object.keys(gen).map((id) => ({ id, generation: gen[id], gender: female.has(id) ? "female" : "male", firstName: id })),
@@ -373,6 +376,15 @@ describe("acomodo: hijos centrados bajo sus padres (árbol real de la captura)",
     const parentMid = (center(ps[0]) + center(ps[1])) / 2;
     const xs = cs.map(center);
     expect(Math.abs((Math.min(...xs) + Math.max(...xs)) / 2 - parentMid)).toBeLessThanOrEqual(2);
+  });
+
+  it("ninguna pareja queda separada por otras personas", () => {
+    const pairs = edges.filter((e) => e.type === "union").map((e) => [e.sourceId, e.targetId]);
+    for (const [a, b] of pairs) {
+      const [lo, hi] = [Math.min(center(a), center(b)), Math.max(center(a), center(b))];
+      const between = Object.keys(gen).filter((id) => gen[id] === gen[a] && center(id) > lo && center(id) < hi);
+      expect([a, b, between]).toEqual([a, b, []]);
+    }
   });
 
   it("la persona foco queda en x = 0", () => {

@@ -251,8 +251,9 @@ export function computeTreeLayout({
         const sideToUse: "L" | "R" = k % 2 === 0 ? preferred : preferred === "L" ? "R" : "L";
         attachedCount.set(anchor, k + 1);
 
-        // La pareja nunca debe quedar entre hermanos: la persona pasa primero al borde de
-        // su grupo de hermanos completos (mismos padres) del lado donde va la pareja.
+        // La pareja no debe quedar entre hermanos: la persona pasa primero al borde de su
+        // grupo de hermanos completos (mismos padres) del lado donde va la pareja. Se detiene
+        // ante un hermano que ya tiene pareja al lado, para no separar a esa otra pareja.
         if (k === 0) {
           const sig = fullSiblingKey(anchor);
           if (sig) {
@@ -261,7 +262,8 @@ export function computeTreeLayout({
             while (
               order[edge + step] !== undefined &&
               order[edge + step] !== focusId &&
-              fullSiblingKey(order[edge + step]) === sig
+              fullSiblingKey(order[edge + step]) === sig &&
+              !attachedCount.has(order[edge + step])
             ) {
               edge += step;
             }
@@ -543,12 +545,21 @@ export function computeTreeLayout({
     return targets;
   };
   const parentsTargets = (g: number) => {
-    const targets = new Map<string, number>();
+    // Solo el primer y el último hijo de cada grupo reciben objetivo: así lo que se centra
+    // bajo los padres es la barra de hermanos completa, aunque haya parejas intercaladas.
+    const groups = new Map<string, { ids: string[]; target: number }>();
     for (const id of orders.get(g) ?? []) {
-      const parentCenters = getParents(id)
-        .filter((p) => genOf(p) === g - 1 && centers.has(p))
-        .map((p) => centers.get(p)!);
-      if (parentCenters.length > 0) targets.set(id, mean(parentCenters));
+      const parents = getParents(id).filter((p) => genOf(p) === g - 1 && centers.has(p));
+      if (parents.length === 0) continue;
+      const key = [...parents].sort().join("_");
+      const group = groups.get(key) ?? { ids: [], target: mean(parents.map((p) => centers.get(p)!)) };
+      group.ids.push(id);
+      groups.set(key, group);
+    }
+    const targets = new Map<string, number>();
+    for (const { ids, target } of groups.values()) {
+      targets.set(ids[0], target);
+      targets.set(ids[ids.length - 1], target);
     }
     return targets;
   };
