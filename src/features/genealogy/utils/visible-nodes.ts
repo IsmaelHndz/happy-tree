@@ -6,6 +6,7 @@
  * - basic: familia de casa (padres, hijos, pareja, hermanos).
  * - intermediate / owner: familia extendida (abuelos, tíos, primos, sobrinos, nietos)
  *   más el completado de familias ensambladas (ver paso 3).
+ * - owner además: todos los ancestros y descendientes directos (bisabuelos, bisnietos…).
  * - advanced: todo lo anterior más el resto del componente conectado (bisabuelos, primos lejanos…).
  *
  * Las uniones recibidas deben estar ya saneadas (`partitionUnionsByIntegrity`) y filtradas
@@ -131,6 +132,30 @@ export function selectVisibleNodeIds({
     Array.from(visible).forEach((id) => (partnersOf.get(id) ?? []).forEach((partnerId) => visible.add(partnerId)));
     const inLawIds = Array.from(visible).filter((id) => !bloodIds.has(id));
     inLawIds.forEach((id) => (childrenOf.get(id) ?? []).forEach((c) => visible.add(c)));
+  }
+
+  // 3.1 Árbol propio: la línea directa completa hacia arriba (bisabuelos, tatarabuelos…) y hacia
+  //     abajo (bisnietos…), más los otros progenitores de esos descendientes. Sin esto el dueño
+  //     tenía que centrarse en su abuela para ver a sus bisabuelos.
+  if (tier === "owner") {
+    const walk = (start: string[], next: Map<string, string[]>) => {
+      const seen = new Set<string>(start);
+      const queue = [...start];
+      for (let i = 0; i < queue.length; i++) {
+        for (const n of next.get(queue[i]) ?? []) {
+          if (seen.has(n) || n === centerPersonId) continue;
+          seen.add(n);
+          queue.push(n);
+        }
+      }
+      return seen;
+    };
+    walk(parentIds, parentsOf).forEach((id) => visible.add(id));
+    const descendants = walk(childIds, childrenOf);
+    descendants.forEach((id) => {
+      visible.add(id);
+      (parentsOf.get(id) ?? []).forEach((p) => visible.add(p));
+    });
   }
 
   // 4. Avanzado: todo el componente conectado (BFS iterativo por padres, hijos y parejas)

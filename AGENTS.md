@@ -159,7 +159,8 @@ Access control table for sharing trees with external friends.
   - `'profile'`: Only the granter's own card, no relatives at all (for exes and acquaintances).
   - `'basic'`: Immediate home family only (Parents, Siblings, Spouse, Children).
   - `'intermediate'`: Home family + Grandparents, Uncles, Aunts, Cousins, Nephews/Nieces, Grandchildren.
-  - `'advanced'`: Intermediate + the rest of the connected component (great-grandparents, distant relatives). The owner's own view (`owner`) is unchanged.
+  - `'advanced'`: Intermediate + the rest of the connected component (great-grandparents, distant relatives).
+  - The owner's own view (`owner`) is intermediate + blended-family completion + the whole direct line (all ancestors and descendants, e.g. great-grandparents), labeled `Bisabuelo/a`, `Tatarabuelo/a`, `Bisnieto/a`… in `inferKinship` (6.1).
   - Guests are clamped server-side: `get-family-graph.ts` builds `grantedNodeIds` from the granter's person and tier; `?focus=` outside that set falls back to the granter, and loaded nodes are intersected with it.
 - `status` (`'pending' | 'approved' | 'rejected'`).
 

@@ -273,6 +273,64 @@ export function inferKinship({
     }
   }
 
+  // 6.1 Ancestros y descendientes directos lejanos (bisabuelos, tatarabuelos, bisnietos…).
+  //     BFS iterativo con profundidad; el lado materno/paterno lo da el progenitor de la raíz.
+  {
+    const walk = (startIds: string[], next: (id: string) => string[]) => {
+      const found = new Map<string, { depth: number; via: string; from: string }>();
+      let frontier = startIds.map((id) => ({ id, via: id, from: rootPersonId }));
+      const seen = new Set<string>([rootPersonId, ...startIds]);
+      for (let depth = 2; frontier.length > 0 && depth <= 12; depth++) {
+        const nextFrontier: { id: string; via: string; from: string }[] = [];
+        for (const { id, via } of frontier) {
+          for (const n of next(id)) {
+            if (seen.has(n)) continue;
+            seen.add(n);
+            found.set(n, { depth, via, from: id });
+            nextFrontier.push({ id: n, via, from: id });
+          }
+        }
+        frontier = nextFrontier;
+      }
+      return found;
+    };
+    const up = (id: string) => parentEdges.filter((e) => e.child_id === id).map((e) => e.parent_id);
+    const down = (id: string) => parentEdges.filter((e) => e.parent_id === id).map((e) => e.child_id);
+    // Bis-abuelo, Tatar-abuelo, Trastatar-abuelo; Bis-nieto, Tatara-nieto, Trastatara-nieto
+    const greatPrefix = (depth: number) => (depth === 3 ? "Bis" : depth === 4 ? "Tatara" : depth === 5 ? "Trastatara" : null);
+    const ancestorPrefix = (depth: number) => greatPrefix(depth)?.replace(/a$/, "") ?? null;
+
+    const ancestor = walk(rootParentIds, up).get(targetPersonId);
+    if (ancestor && ancestor.depth >= 3) {
+      const prefix = ancestorPrefix(ancestor.depth);
+      const isMaternal = personsMap?.get(ancestor.via)?.gender === "female";
+      const side = isMaternal ? (isFemale ? "materna" : "materno") : isFemale ? "paterna" : "paterno";
+      const childObj = personsMap?.get(ancestor.from);
+      return {
+        relationshipLabel: prefix
+          ? `${prefix}${isFemale ? "abuela" : isMale ? "abuelo" : "abuelo/a"} ${side}`
+          : `Ancestro directo (${ancestor.depth} generaciones)`,
+        relationshipCategory: "parent",
+        explanation: childObj ? `${isFemale ? "Madre" : isMale ? "Padre" : "Progenitor/a"} de ${childObj.firstName}` : undefined,
+        degree: ancestor.depth,
+      };
+    }
+
+    const descendant = walk(rootChildIds, down).get(targetPersonId);
+    if (descendant && descendant.depth >= 3) {
+      const prefix = greatPrefix(descendant.depth);
+      const parentObj = personsMap?.get(descendant.from);
+      return {
+        relationshipLabel: prefix
+          ? `${prefix}${isFemale ? "nieta" : isMale ? "nieto" : "nieto/a"}`
+          : `Descendiente directo (${descendant.depth} generaciones)`,
+        relationshipCategory: "child",
+        explanation: parentObj ? `${isFemale ? "Hija" : isMale ? "Hijo" : "Hijo/a"} de ${parentObj.firstName}` : undefined,
+        degree: descendant.depth,
+      };
+    }
+  }
+
   // 7. Tíos / Tías (hermanos de los progenitores de la raíz)
   if (rootParentIds.length > 0) {
     for (const parentId of rootParentIds) {

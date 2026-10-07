@@ -391,3 +391,48 @@ describe("acomodo: hijos centrados bajo sus padres (árbol real de la captura)",
     expect(center("ism")).toBe(0);
   });
 });
+
+describe("línea directa completa en el árbol propio", () => {
+  // Bisabuelos maternos (bisa, bisa2) → abuela → madre → yo → hijo → nieta → bisnieto
+  const edges = [
+    ["bisa", "abuela"], ["bisa2", "abuela"], ["tatara", "bisa"],
+    ["abuela", "madre"], ["madre", "yo"], ["padre", "yo"],
+    ["yo", "hijo"], ["hijo", "nieta"], ["nieta", "bisnieto"], ["yerno", "bisnieto"],
+  ].map(([parent_id, child_id]) => ({ parent_id, child_id }));
+  const meta: [string, "male" | "female"][] = [
+    ["bisa", "female"], ["bisa2", "male"], ["tatara", "male"], ["abuela", "female"], ["madre", "female"],
+    ["padre", "male"], ["yo", "female"], ["hijo", "male"], ["nieta", "female"], ["bisnieto", "male"], ["yerno", "male"],
+  ];
+  const personsMap = new Map(meta.map(([id, gender]) => [id, { id, firstName: id, lastName: "", gender }]));
+  const visibleAs = (tier: "owner" | "intermediate") =>
+    new Set(selectVisibleNodeIds({ centerPersonId: "yo", parentEdges: edges, unions: [], tier }).nodeIds);
+  const kin = (target: string) =>
+    inferKinship({
+      rootPersonId: "yo",
+      targetPersonId: target,
+      targetGender: personsMap.get(target)!.gender,
+      parentEdges: edges,
+      unions: [],
+      personsMap,
+    });
+
+  it("el dueño ve a sus bisabuelos, tatarabuelos y bisnietos", () => {
+    const v = visibleAs("owner");
+    for (const id of ["bisa", "bisa2", "tatara", "bisnieto", "yerno"]) expect([id, v.has(id)]).toEqual([id, true]);
+  });
+
+  it("el nivel intermedio compartido sigue llegando solo a los abuelos", () => {
+    const v = visibleAs("intermediate");
+    expect(v.has("abuela")).toBe(true);
+    expect(v.has("bisa")).toBe(false);
+  });
+
+  it("etiquetas de la línea directa lejana", () => {
+    expect(kin("bisa").relationshipLabel).toBe("Bisabuela materna");
+    expect(kin("bisa2").relationshipLabel).toBe("Bisabuelo materno");
+    expect(kin("tatara").relationshipLabel).toBe("Tatarabuelo materno");
+    expect(kin("bisnieto").relationshipLabel).toBe("Bisnieto");
+    expect(kin("yerno").relationshipLabel).not.toMatch(/nieto/i);
+    expect(kin("bisa").explanation).toBe("Madre de abuela");
+  });
+});
