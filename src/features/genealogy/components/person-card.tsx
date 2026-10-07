@@ -65,9 +65,14 @@ export function PersonCard({
       } ${isDimmed ? "opacity-20" : ""} ${
         isCenter
           ? "bg-gradient-to-b from-emerald-950/90 to-neutral-900 border-emerald-500/80 ring-2 ring-emerald-500/30"
-          : isSelected
-          ? "bg-neutral-900 border-neutral-500"
-          : "bg-neutral-900/95 border-neutral-800 hover:border-neutral-600"
+          : `bg-neutral-900/95 ${
+              // Contorno del color de su sexo; se ilumina al pasar el mouse o al abrir sus detalles
+              isFemale
+                ? `hover:border-pink-400/80 hover:shadow-pink-500/25 ${isSelected ? "border-pink-400/80 shadow-pink-500/25" : "border-pink-500/30"}`
+                : isMale
+                ? `hover:border-blue-400/80 hover:shadow-blue-500/25 ${isSelected ? "border-blue-400/80 shadow-blue-500/25" : "border-blue-500/30"}`
+                : `hover:border-neutral-500 ${isSelected ? "border-neutral-500" : "border-neutral-800"}`
+            }`
       } ${className}`}
     >
       <span
