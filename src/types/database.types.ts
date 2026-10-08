@@ -10,6 +10,8 @@ export type Gender = "male" | "female" | "other" | "unknown";
 export type ParentChildRelationshipType = "biological" | "adopted" | "foster" | "step";
 export type UnionType = "married" | "civil_union" | "divorced" | "separated" | "partner";
 export type EdgeStatus = "pending_confirmation" | "confirmed" | "rejected";
+export type LayoutFeedbackKind = "manual_adjust" | "report" | "change_request";
+export type LayoutFeedbackStatus = "new" | "reviewed" | "approved" | "rejected";
 export type InvitationStatus = "pending" | "accepted" | "expired" | "revoked";
 export type TreePermissionTier = "profile" | "basic" | "intermediate" | "advanced";
 export type TreeAccessStatus = "pending" | "approved" | "rejected" | "revoked";
@@ -324,6 +326,81 @@ export interface Database {
           created_by_user_id?: string | null;
           created_at?: string;
           updated_at?: string;
+        };
+        Relationships: [];
+      };
+      layout_preferences: {
+        Row: {
+          user_id: string;
+          rules: Json;
+          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          rules?: Json;
+          updated_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          rules?: Json;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      layout_feedback: {
+        Row: {
+          id: string;
+          user_id: string;
+          kind: LayoutFeedbackKind;
+          status: LayoutFeedbackStatus;
+          focus_person_id: string | null;
+          tree_owner_user_id: string | null;
+          scope: string | null;
+          base_rules: Json;
+          rules: Json;
+          crossings_before: number | null;
+          crossings_after: number | null;
+          algorithm_version: string | null;
+          comment: string | null;
+          reviewer_note: string | null;
+          created_at: string;
+          reviewed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          kind: LayoutFeedbackKind;
+          status?: LayoutFeedbackStatus;
+          focus_person_id?: string | null;
+          tree_owner_user_id?: string | null;
+          scope?: string | null;
+          base_rules?: Json;
+          rules?: Json;
+          crossings_before?: number | null;
+          crossings_after?: number | null;
+          algorithm_version?: string | null;
+          comment?: string | null;
+          reviewer_note?: string | null;
+          created_at?: string;
+          reviewed_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          kind?: LayoutFeedbackKind;
+          status?: LayoutFeedbackStatus;
+          focus_person_id?: string | null;
+          tree_owner_user_id?: string | null;
+          scope?: string | null;
+          base_rules?: Json;
+          rules?: Json;
+          crossings_before?: number | null;
+          crossings_after?: number | null;
+          algorithm_version?: string | null;
+          comment?: string | null;
+          reviewer_note?: string | null;
+          created_at?: string;
+          reviewed_at?: string | null;
         };
         Relationships: [];
       };

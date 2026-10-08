@@ -4,7 +4,7 @@ import { getConnectedFamilyIds, inferKinship } from "../kinship-inference";
 import { assignGenerations, selectVisibleNodeIds, type VisibilityTier } from "../visible-nodes";
 import { computeTreeLayout, TREE_LAYOUT } from "../tree-layout";
 import { parseTreeScope, tierForScope } from "../tree-scope";
-import { countCrossings, countRowCrossings, reduceCrossings } from "../layout-crossings";
+import { arrangeOptions, countCrossings, countRowCrossings, ordersFromPositions, reduceCrossings } from "../layout-crossings";
 import { ALL_IDS, allUnions, corruptUnions, genderOf, parentEdges, personsMap, validUnions } from "./fixtures";
 
 const { validUnions: saneUnions, issues } = partitionUnionsByIntegrity(allUnions, parentEdges);
@@ -510,6 +510,57 @@ describe("acomodo: cada miembro de una pareja del lado de su propia familia", ()
       sideOf: () => 0,
     });
     expect(crossings).toBe(0);
+  });
+
+  const layoutWith = (rules: { left: string; right: string }[]) => {
+    const p = computeTreeLayout({
+      nodes: Object.keys(gen).map((id) => ({ id, generation: gen[id], gender: female.has(id) ? "female" : "male", firstName: id })),
+      edges,
+      focusId: "lyndsay",
+      rules,
+    });
+    return (id: string) => p.get(id)!.x;
+  };
+  const nobodyBetween = (xr: (id: string) => number, a: string, b: string) => {
+    const [lo, hi] = [Math.min(xr(a), xr(b)), Math.max(xr(a), xr(b))];
+    return Object.keys(gen).filter((id) => gen[id] === gen[a] && xr(id) > lo && xr(id) < hi);
+  };
+
+  it("regla manual: voltear a una pareja la deja volteada y junta", () => {
+    const xr = layoutWith([{ left: "prieta", right: "mocho" }]);
+    expect(xr("prieta")).toBeLessThan(xr("mocho"));
+  });
+
+  it("regla manual: mover al hijo de solo uno de los padres al otro lado de sus medios hermanos", () => {
+    const xr = layoutWith([{ left: "joseluis", right: "maria" }]);
+    expect(xr("joseluis")).toBeLessThan(xr("maria"));
+    // Sigue sin quedar nadie entre Jose y Juana
+    expect(nobodyBetween(xr, "jose", "juana")).toEqual([]);
+  });
+
+  it("modo Acomodar: las opciones de una persona producen el cambio esperado", () => {
+    const parentsOf = (id: string) => edges.filter((e) => e.type === "parent-child" && e.targetId === id).map((e) => e.sourceId);
+    const partnersOf = (id: string) =>
+      edges.filter((e) => e.type === "union" && (e.sourceId === id || e.targetId === id)).map((e) => (e.sourceId === id ? e.targetId : e.sourceId));
+    const ordersOf = (xr: (id: string) => number) =>
+      ordersFromPositions(Object.keys(gen).map((id) => ({ id, generation: gen[id], x: xr(id) })));
+    const base = layoutWith([]);
+    const prieta = arrangeOptions(ordersOf(base), "prieta", { getParents: parentsOf, getPartners: partnersOf });
+    expect(prieta.flip).toBeDefined();
+    const flipped = layoutWith([prieta.flip!]);
+    expect(Math.sign(flipped("prieta") - flipped("mocho"))).toBe(-Math.sign(base("prieta") - base("mocho")));
+
+    const jl = arrangeOptions(ordersOf(base), "joseluis", { getParents: parentsOf, getPartners: partnersOf });
+    const move = jl.moveLeft ?? jl.moveRight!;
+    const moved = layoutWith([move]);
+    expect(moved(move.left)).toBeLessThan(moved(move.right));
+  });
+
+  it("una regla imposible se ignora sin romper el acomodo", () => {
+    // Pancho y Jose son hermanos completos del mismo grupo: no hay movimiento que los separe así
+    const xr = layoutWith([{ left: "pancho", right: "jose" }]);
+    expect(nobodyBetween(xr, "jose", "juana")).toEqual([]);
+    expect(nobodyBetween(xr, "prieta", "mocho")).toEqual([]);
   });
 
   it("los hermanos de Jose quedan del lado de Jose, no del de Juana", () => {

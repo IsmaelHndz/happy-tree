@@ -97,6 +97,8 @@ src/
 │   │   │   └── social-connections.ts # Friends/dating helpers (socialOnlyPersonIds)
 │   │   └── components/
 │   │       ├── tree-canvas.tsx         # Pan/Zoom SVG canvas, orthogonal bus bars, node rendering
+│   │       ├── arrange-bar.tsx         # "Acomodar" mode: flip a couple / move a sibling group, live crossings count, save or propose
+│   │       ├── layout-diff.tsx         # User Zero review: before/after SVGs (moved people in amber), approve/reject, copy as test case
 │   │       ├── export-pdf-modal.tsx    # PDF export: light/dark preview of the current scene, one page sized to the tree (jsPDF + svg2pdf, lazy-loaded)
 │   │       ├── person-card.tsx         # Portrait card (tree + directory): avatar, name, kinship, age; no actions
 │   │       ├── person-details-panel.tsx # Side panel: dates, notes, family, and every action (permission-gated)
@@ -389,6 +391,11 @@ Two tabs, nothing else:
 
 ### Crossing reduction in the layout
 After rows are ordered (and couples placed on their own family's side), `computeTreeLayout` runs `reduceCrossings` (`layout-crossings.ts`): it counts parent→child crossings between adjacent rows from the row orders alone and tries single moves (flip a couple, swap two adjacent sibling blocks), then pairs of moves when stuck, keeping the first that lowers the count. It never separates adjacent partners, never puts the father before the mother, and keeps maternal relatives left of the mother and paternal right of the father. Bounded to 400 people (pairs only up to 150) and 120ms. Remaining unavoidable crossings are drawn as bridges (`SceneBus.gaps`).
+
+### Manual arrangement, reports and change requests
+- Rules are `{ left, right }` person ids ("left goes left of right", same row). `computeTreeLayout({ rules })` applies them first (`applyLayoutRules`: flip the couple or move the sibling block) and `reduceCrossings` can't undo them; impossible rules are ignored.
+- Own tree (not guest): "Acomodar" saves to `layout_preferences` (one row per user) and auto-inserts a `layout_feedback` row (`manual_adjust`). Guests can't save: they send a `change_request` that only User Zero can approve (`reviewLayoutFeedbackAction` copies the rules to the owner's `layout_preferences`). Guests see the owner's arrangement.
+- User Zero reviews everything at `/admin/acomodo` (before/after diff, crossings, "Copiar como caso de prueba" with anonymized ids). Migration `20261008000000_layout_preferences_and_feedback.sql`. Bump `LAYOUT_ALGORITHM_VERSION` when the layout changes.
 
 ### Tree canvas on touch devices
 `tree-canvas.tsx` handles mouse, touch and pen with pointer events on the stage (`touch-action: none`): one pointer pans after a 6px threshold (the browser's click is then suppressed so a drag never opens or highlights a card), two pointers pinch-zoom around their midpoint, and the wheel zooms at the cursor through a native non-passive listener. Below 640px the tree opens fitted to the screen; below 768px secondary controls move to the "⋯" menu. Keep all drawing in `buildTreeScene` so the PDF export stays identical to the screen.

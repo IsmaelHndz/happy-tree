@@ -122,9 +122,11 @@ export interface TreeSvgOptions {
   theme: PdfTheme;
   title: string;
   subtitle: string;
+  // Personas marcadas con contorno ámbar (p. ej. las que cambiaron de lugar en una revisión)
+  markedIds?: Set<string>;
 }
 
-export function buildTreeSvg(scene: TreeScene, { theme, title, subtitle }: TreeSvgOptions): {
+export function buildTreeSvg(scene: TreeScene, { theme, title, subtitle, markedIds }: TreeSvgOptions): {
   svg: string;
   width: number;
   height: number;
@@ -216,6 +218,9 @@ export function buildTreeSvg(scene: TreeScene, { theme, title, subtitle }: TreeS
       }" stroke-width="${s.isCenter ? 2 : 1}"/>`,
       `<rect x="${x + 24}" y="${y}" width="${W - 48}" height="3" rx="1.5" fill="${p.lineColor(s.stripeColor)}"/>`
     );
+    if (markedIds?.has(n.id)) {
+      out.push(`<rect x="${x - 4}" y="${y - 4}" width="${W + 8}" height="${H + 8}" rx="19" fill="none" stroke="#f59e0b" stroke-width="3"/>`);
+    }
     if (s.isCenter) {
       out.push(`<text x="${x + 12}" y="${y + 18}" font-size="8" font-weight="bold" fill="${p.lineColor("#10b981")}">CENTRO</text>`);
     }

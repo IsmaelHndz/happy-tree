@@ -1,3 +1,4 @@
+import type { LayoutRule } from "../utils/layout-crossings";
 import type { TreeScope } from "../utils/tree-scope";
 import type { Gender } from "@/types/database.types";
 
@@ -95,6 +96,9 @@ export interface FamilyGraphData {
   isViewerGuest?: boolean;
   // Alcance elegido por la persona en su propio árbol (ausente para invitados)
   scope?: TreeScope;
+  // Acomodo manual aplicado y de quién es (el propio o el del titular si se ve como invitado)
+  layoutRules?: LayoutRule[];
+  layoutOwnerUserId?: string;
   treeOwnerName?: string;
   accessibleTrees?: AccessibleTreeOption[];
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useTransition } from "react";
+import { useState, useRef, useEffect, useMemo, useTransition } from "react";
 import type { FamilyGraphData, TreeNodeData } from "../types/graph.types";
 import { formatFullName } from "../types";
 import { InviteModal } from "@/features/invitations/components/invite-modal";
@@ -15,6 +15,10 @@ import { centerOn, fitToBounds, pinch, zoomAt, type View } from "../utils/viewpo
 import { PersonCard } from "./person-card";
 import { PersonDetailsPanel } from "./person-details-panel";
 import { ExportPdfModal } from "./export-pdf-modal";
+import { ArrangeBar } from "./arrange-bar";
+import { arrangeOptionsFor, graphCrossings, relayoutGraph } from "../utils/arrange";
+import { addLayoutRule, type LayoutRule } from "../utils/layout-crossings";
+import { reportLayoutAction, requestLayoutChangeAction, saveLayoutRulesAction } from "../layout-actions";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -31,6 +35,7 @@ import {
   FileDown,
   Ellipsis,
   Info,
+  ArrowLeftRight,
 } from "lucide-react";
 
 interface TreeCanvasProps {
@@ -86,7 +91,60 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
   // Familia resaltada: se activa tocando una tarjeta o un corazón y se quita tocando el fondo
   const [activeBranchKey, setActiveBranchKey] = useState<string | null>(null);
 
-  const scene = buildTreeScene({ graph, hideSiblingSpouses, activeBranchKey });
+  // Modo "Acomodar": el árbol se recalcula en el navegador con las reglas del borrador
+  const [isArranging, setIsArranging] = useState(false);
+  const [draftRules, setDraftRules] = useState<LayoutRule[]>([]);
+  const [arrangeSelectedId, setArrangeSelectedId] = useState<string | null>(null);
+  const [arrangeBusy, setArrangeBusy] = useState(false);
+  const [arrangeNotice, setArrangeNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const baseRules = useMemo(() => graph.layoutRules ?? [], [graph.layoutRules]);
+  const displayGraph = useMemo(
+    () => (isArranging ? relayoutGraph(graph, draftRules) : graph),
+    [graph, isArranging, draftRules]
+  );
+  const baseCrossings = useMemo(() => graphCrossings(graph), [graph]);
+  const currentCrossings = useMemo(() => graphCrossings(displayGraph), [displayGraph]);
+  const hasArrangeChanges = JSON.stringify(draftRules) !== JSON.stringify(baseRules);
+
+  const startArranging = () => {
+    setDraftRules(baseRules);
+    setArrangeSelectedId(null);
+    setArrangeNotice(null);
+    setActiveBranchKey(null);
+    setIsMobileMenuOpen(false);
+    setIsArranging(true);
+  };
+  const arrangeContext = (comment?: string) => ({
+    focusPersonId: graph.focusPerson.id,
+    scope: graph.scope ?? null,
+    baseRules,
+    rules: draftRules,
+    crossingsBefore: baseCrossings,
+    crossingsAfter: currentCrossings,
+    comment,
+  });
+  const saveArrangement = async (comment: string) => {
+    setArrangeBusy(true);
+    setArrangeNotice(null);
+    const res = graph.isViewerGuest
+      ? await requestLayoutChangeAction({ ...arrangeContext(comment), treeOwnerUserId: graph.layoutOwnerUserId ?? "" })
+      : await saveLayoutRulesAction(arrangeContext());
+    setArrangeBusy(false);
+    if (res.error) {
+      setArrangeNotice({ ok: false, text: res.error });
+      return;
+    }
+    setIsArranging(false);
+    router.refresh();
+  };
+  const reportArrangement = async (comment: string) => {
+    setArrangeBusy(true);
+    const res = await reportLayoutAction({ ...arrangeContext(comment), treeOwnerUserId: graph.layoutOwnerUserId ?? "" });
+    setArrangeBusy(false);
+    setArrangeNotice(res.error ? { ok: false, text: res.error } : { ok: true, text: res.message ?? "Reporte enviado." });
+  };
+
+  const scene = buildTreeScene({ graph: displayGraph, hideSiblingSpouses, activeBranchKey: isArranging ? null : activeBranchKey });
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -380,9 +438,15 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
               stripeColor={s.stripeColor}
               isCenter={s.isCenter}
               isDimmed={s.isDimmed}
-              isSelected={detailsPersonId === s.node.id}
+              isSelected={detailsPersonId === s.node.id || (isArranging && arrangeSelectedId === s.node.id)}
               onOpenDetails={() => setDetailsPersonId(s.node.id)}
-              onClick={s.branchKey ? () => setActiveBranchKey(s.branchKey!) : undefined}
+              onClick={
+                isArranging
+                  ? () => setArrangeSelectedId(s.node.id)
+                  : s.branchKey
+                  ? () => setActiveBranchKey(s.branchKey!)
+                  : undefined
+              }
               style={{
                 position: "absolute",
                 left: `${s.x}px`,
@@ -533,11 +597,43 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
               Exportar PDF
             </button>
           </div>
+          <button
+            type="button"
+            onClick={startArranging}
+            className="w-full flex items-center justify-center gap-2 px-3 py-3 rounded-xl border border-neutral-800 text-sm text-neutral-200"
+          >
+            <ArrowLeftRight className="w-4 h-4" />
+            Acomodar el árbol
+          </button>
         </div>
       )}
 
+      {/* Barra del modo Acomodar (reemplaza a los controles mientras está activo) */}
+      {isArranging && (
+        <ArrangeBar
+          isGuest={Boolean(graph.isViewerGuest)}
+          selectedName={arrangeSelectedId ? allNodesById.get(arrangeSelectedId)?.firstName ?? null : null}
+          options={arrangeSelectedId ? arrangeOptionsFor(displayGraph, arrangeSelectedId) : {}}
+          crossingsBefore={baseCrossings}
+          crossingsAfter={currentCrossings}
+          hasChanges={hasArrangeChanges}
+          canUndo={draftRules.length > 0}
+          busy={arrangeBusy}
+          notice={arrangeNotice}
+          onApply={(rule) => {
+            setArrangeNotice(null);
+            setDraftRules((rules) => addLayoutRule(rules, rule));
+          }}
+          onUndo={() => setDraftRules((rules) => rules.slice(0, -1))}
+          onResetAll={() => setDraftRules([])}
+          onCancel={() => setIsArranging(false)}
+          onSave={saveArrangement}
+          onReport={reportArrangement}
+        />
+      )}
+
       {/* Controles flotantes de navegación y visualización */}
-      <div className="tree-controls absolute bottom-3 right-3 sm:bottom-6 sm:right-6 flex items-center gap-1 bg-neutral-900/90 border border-neutral-800 p-1.5 rounded-2xl shadow-xl backdrop-blur-md z-20">
+      <div className={`${isArranging ? "hidden" : ""} tree-controls absolute bottom-3 right-3 sm:bottom-6 sm:right-6 flex items-center gap-1 bg-neutral-900/90 border border-neutral-800 p-1.5 rounded-2xl shadow-xl backdrop-blur-md z-20`}>
         {!graph.isViewerGuest && (
           <>
             <button
@@ -592,6 +688,9 @@ export function TreeCanvas({ graph }: TreeCanvasProps) {
         </button>
         <button onClick={() => setIsExportOpen(true)} title="Exportar el árbol en PDF" aria-label="Exportar el árbol en PDF" className={`hidden md:block ${iconButton}`}>
           <FileDown className="w-4 h-4" />
+        </button>
+        <button onClick={startArranging} title="Acomodar el árbol" aria-label="Acomodar el árbol" className={`hidden md:block ${iconButton}`}>
+          <ArrowLeftRight className="w-4 h-4" />
         </button>
         <button
           onClick={() => {

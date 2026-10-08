@@ -36,7 +36,7 @@
  */
 
 // Tarjeta tipo retrato (PersonCard): angosta para que el árbol crezca menos a los lados
-import { reduceCrossings } from "./layout-crossings";
+import { applyLayoutRules, reduceCrossings, type LayoutRule } from "./layout-crossings";
 
 export const TREE_LAYOUT = {
   NODE_WIDTH: 168,
@@ -76,10 +76,13 @@ export function computeTreeLayout({
   nodes,
   edges,
   focusId,
+  rules = [],
 }: {
   nodes: LayoutNodeInput[];
   edges: LayoutEdgeInput[];
   focusId: string;
+  // Acomodo manual elegido por la persona ("A a la izquierda de B")
+  rules?: LayoutRule[];
 }): Map<string, LayoutPosition> {
   const result = new Map<string, LayoutPosition>();
   if (nodes.length === 0) return result;
@@ -458,12 +461,14 @@ export function computeTreeLayout({
 
   // --- Menos cruces: prueba voltear parejas y mover grupos de hermanos -----------
   // (utils/layout-crossings.ts). Acotado en árboles grandes para que siga siendo rápido.
+  // Primero las reglas manuales; la búsqueda después no puede deshacerlas.
+  const crossingCtx = { getParents, getPartners, genOf, motherId, fatherId, sideOf };
+  const ruled = applyLayoutRules(orders, rules, crossingCtx);
+  ruled.orders.forEach((order, g) => orders.set(g, order));
   if (nodes.length <= SEARCH_MAX_NODES) {
-    const improved = reduceCrossings(
-      orders,
-      { getParents, getPartners, genOf, motherId, fatherId, sideOf },
-      { allowPairs: nodes.length <= PAIR_SEARCH_MAX_NODES }
-    );
+    const improved = reduceCrossings(orders, { ...crossingCtx, rules: ruled.active }, {
+      allowPairs: nodes.length <= PAIR_SEARCH_MAX_NODES,
+    });
     improved.forEach((order, g) => orders.set(g, order));
   }
 

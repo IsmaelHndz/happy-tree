@@ -37,3 +37,9 @@ export const PROFILE_TIER_MIGRATION = "supabase/migrations/20261005000001_tree_t
 export const MISSING_PROPOSAL_COLUMNS_MESSAGE =
   `La base de datos todavía no tiene las propuestas de noviazgo formal. ` +
   `Ejecuta la migración ${PROFILE_TIER_MIGRATION} en el SQL Editor de Supabase y vuelve a intentarlo.`;
+
+export const LAYOUT_MIGRATION = "supabase/migrations/20261008000000_layout_preferences_and_feedback.sql";
+
+export const MISSING_LAYOUT_TABLES_MESSAGE =
+  `La base de datos todavía no tiene las tablas de acomodo. ` +
+  `Ejecuta la migración ${LAYOUT_MIGRATION} en el SQL Editor de Supabase y vuelve a intentarlo.`;

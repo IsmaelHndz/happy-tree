@@ -10,7 +10,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { parseTreeScope, TREE_SCOPE_COOKIE } from "@/features/genealogy/utils/tree-scope";
 import Link from "next/link";
-import { GitFork, Users, LogOut, Shield } from "lucide-react";
+import { GitFork, Users, LogOut, Shield, GitPullRequestArrow } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +44,16 @@ export default async function TreePage({ searchParams }: TreePageProps) {
   const cookieStore = await cookies();
   const scope = parseTreeScope(alcance ?? cookieStore.get(TREE_SCOPE_COOKIE)?.value);
   const graph = await getFamilyGraph(focus, friendId, scope);
+
+  // Usuario Cero: reportes de acomodo pendientes de revisar
+  let pendingLayoutReports = 0;
+  if (profile.is_user_zero) {
+    const { count } = await supabase
+      .from("layout_feedback")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "new");
+    pendingLayoutReports = count ?? 0;
+  }
 
   const availableAnchors = graph.availableMembers.map((m) => ({
     id: m.id,
@@ -89,6 +99,19 @@ export default async function TreePage({ searchParams }: TreePageProps) {
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Gestor de Amigos y Solicitudes */}
           <FriendsManagerModal />
+
+          {profile.is_user_zero && (
+            <Link
+              href="/admin/acomodo"
+              className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-white px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-xl transition"
+            >
+              <GitPullRequestArrow className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Reportes de acomodo</span>
+              {pendingLayoutReports > 0 && (
+                <span className="ml-0.5 px-1.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono">{pendingLayoutReports}</span>
+              )}
+            </Link>
+          )}
 
           <Link
             href="/"

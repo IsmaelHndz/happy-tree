@@ -12,6 +12,31 @@
 
 export type Orders = Map<number, string[]>;
 
+/** Regla de acomodo elegida por la persona: `left` va a la izquierda de `right` (misma fila). */
+// Alias (no interface) para que sea asignable al tipo Json de Supabase
+export type LayoutRule = {
+  left: string;
+  right: string;
+};
+
+/** Lee reglas guardadas (JSON de la base) descartando lo que no tenga la forma esperada. */
+export function parseLayoutRules(value: unknown): LayoutRule[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((r): r is LayoutRule => typeof r?.left === "string" && typeof r?.right === "string" && r.left !== r.right)
+    .map((r) => ({ left: r.left, right: r.right }));
+}
+
+/** Agrega una regla quitando antes cualquier regla sobre el mismo par (la nueva manda). */
+export function addLayoutRule(rules: LayoutRule[], rule: LayoutRule): LayoutRule[] {
+  const samePair = (r: LayoutRule) =>
+    (r.left === rule.left && r.right === rule.right) || (r.left === rule.right && r.right === rule.left);
+  return [...rules.filter((r) => !samePair(r)), rule];
+}
+
+// Cambia cuando cambia el algoritmo de acomodo; se guarda en cada reporte
+export const LAYOUT_ALGORITHM_VERSION = "2026-10-08";
+
 export interface CrossingContext {
   getParents: (id: string) => string[];
   getPartners: (id: string) => string[];
@@ -20,6 +45,8 @@ export interface CrossingContext {
   fatherId?: string;
   // -1 materno, 1 paterno, 0 centro
   sideOf: (id: string) => -1 | 0 | 1;
+  // Reglas manuales que ya se cumplen y deben seguir cumpliéndose
+  rules?: LayoutRule[];
 }
 
 function rowEdges(order: string[], above: string[], ctx: CrossingContext): [number, number][] {
@@ -77,6 +104,11 @@ function isValidRow(order: string[], required: Set<string>, ctx: CrossingContext
       if (side === 1 && fi >= 0 && i < fi) return false;
     }
   }
+  for (const rule of ctx.rules ?? []) {
+    const l = order.indexOf(rule.left);
+    const r = order.indexOf(rule.right);
+    if (l >= 0 && r >= 0 && l > r) return false;
+  }
   return true;
 }
 
@@ -115,6 +147,66 @@ function rowBlocks(order: string[], above: string[] | undefined, ctx: CrossingCo
 }
 
 type Move = { gen: number; apply: (order: string[]) => string[] };
+
+/** Saca el bloque que contiene `id` y lo pone justo antes del bloque que contiene `beforeId`. */
+function moveBlockBefore(order: string[], above: string[] | undefined, id: string, beforeId: string, ctx: CrossingContext): string[] {
+  const blocks = rowBlocks(order, above, ctx);
+  const blockOf = (x: string) => blocks.find(([s, e]) => order.slice(s, e).includes(x));
+  const a = blockOf(id);
+  const b = blockOf(beforeId);
+  if (!a || !b || a === b) return order;
+  const moving = order.slice(a[0], a[1]);
+  const rest = [...order.slice(0, a[0]), ...order.slice(a[1])];
+  const at = rest.indexOf(order[b[0]]);
+  return [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+}
+
+/**
+ * Aplica las reglas manuales: voltea la pareja o mueve el grupo de hermanos para cumplir
+ * cada regla, solo si el resultado sigue respetando las reglas del acomodo. Devuelve las
+ * reglas que quedaron cumplidas (las demás no aplican a este árbol o son imposibles).
+ */
+export function applyLayoutRules(orders: Orders, rules: LayoutRule[], ctx: CrossingContext): { orders: Orders; active: LayoutRule[] } {
+  const current: Orders = new Map([...orders].map(([g, o]) => [g, [...o]]));
+  const active: LayoutRule[] = [];
+  for (const rule of rules) {
+    for (const [g, order] of current) {
+      const l = order.indexOf(rule.left);
+      const r = order.indexOf(rule.right);
+      if (l < 0 || r < 0) continue;
+      if (l < r) {
+        active.push(rule);
+        break;
+      }
+      const required = adjacentPartnerPairs(order, ctx);
+      const candidates =
+        l === r + 1 && ctx.getPartners(rule.left).includes(rule.right)
+          ? [[...order.slice(0, r), rule.left, rule.right, ...order.slice(l + 1)]]
+          : [moveBlockBefore(order, current.get(g - 1), rule.left, rule.right, ctx)];
+      const next = candidates.find((c) =>
+        c.indexOf(rule.left) < c.indexOf(rule.right) && isValidRow(c, required, { ...ctx, rules: active })
+      );
+      if (next) {
+        current.set(g, next);
+        active.push(rule);
+      }
+      break;
+    }
+  }
+  return { orders: current, active };
+}
+
+/** Cruces de un acomodo ya calculado (filas por generación, ordenadas por x). */
+export function countLayoutCrossings(
+  nodes: { id: string; generation: number; x: number }[],
+  getParents: (id: string) => string[]
+): number {
+  const orders: Orders = new Map();
+  for (const n of [...nodes].sort((a, b) => a.x - b.x)) {
+    orders.set(n.generation, [...(orders.get(n.generation) ?? []), n.id]);
+  }
+  return countCrossings(orders, { getParents, getPartners: () => [], genOf: () => 0, sideOf: () => 0 });
+}
 
 function candidateMoves(orders: Orders, ctx: CrossingContext): Move[] {
   const moves: Move[] = [];
@@ -220,4 +312,42 @@ export function reduceCrossings(
     if (!improved) break;
   }
   return current;
+}
+
+/**
+ * Lo que se puede hacer con una persona en el modo "Acomodar": voltearla con su pareja de al
+ * lado o mover su grupo de hermanos un lugar a la izquierda o a la derecha. Cada opción es la
+ * regla que lo logra (o ausente si no aplica).
+ */
+export function arrangeOptions(
+  orders: Orders,
+  personId: string,
+  ctx: Pick<CrossingContext, "getParents" | "getPartners">
+): { flip?: LayoutRule; moveLeft?: LayoutRule; moveRight?: LayoutRule } {
+  const fullCtx: CrossingContext = { ...ctx, genOf: () => 0, sideOf: () => 0 };
+  for (const [g, order] of orders) {
+    const i = order.indexOf(personId);
+    if (i < 0) continue;
+    const options: { flip?: LayoutRule; moveLeft?: LayoutRule; moveRight?: LayoutRule } = {};
+    const partners = ctx.getPartners(personId);
+    if (order[i + 1] && partners.includes(order[i + 1])) options.flip = { left: order[i + 1], right: personId };
+    else if (order[i - 1] && partners.includes(order[i - 1])) options.flip = { left: personId, right: order[i - 1] };
+    const block = rowBlocks(order, orders.get(g - 1), fullCtx).find(([s, e]) => i >= s && i < e);
+    if (block) {
+      const [s, e] = block;
+      if (s > 0) options.moveLeft = { left: order[s], right: order[s - 1] };
+      if (e < order.length) options.moveRight = { left: order[e], right: order[s] };
+    }
+    return options;
+  }
+  return {};
+}
+
+/** Orden de cada fila (generación) a partir de las posiciones dibujadas. */
+export function ordersFromPositions(nodes: { id: string; generation: number; x?: number }[]): Orders {
+  const orders: Orders = new Map();
+  for (const n of [...nodes].filter((n) => n.x !== undefined).sort((a, b) => a.x! - b.x!)) {
+    orders.set(n.generation, [...(orders.get(n.generation) ?? []), n.id]);
+  }
+  return orders;
 }

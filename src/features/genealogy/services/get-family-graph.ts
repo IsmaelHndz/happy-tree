@@ -5,6 +5,7 @@ import type { TreePermissionTier } from "../types";
 import { inferKinship, getConnectedFamilyIds } from "../utils/kinship-inference";
 import { partitionUnionsByIntegrity } from "../utils/graph-integrity";
 import { computeTreeLayout } from "../utils/tree-layout";
+import { parseLayoutRules } from "../utils/layout-crossings";
 import { assignGenerations, selectVisibleNodeIds } from "../utils/visible-nodes";
 import { isMissingColumnError, MISSING_NAME_COLUMNS_MESSAGE } from "../utils/db-errors";
 import { formatFullName } from "../types";
@@ -105,6 +106,8 @@ export async function getFamilyGraph(
   let viewerTier: TreePermissionTier = "advanced";
   let treeOwnerName: string | undefined = undefined;
   let defaultFriendPersonId: string | null = null;
+  // Dueño del acomodo que se aplica: el propio, o el del titular cuando se ve como invitado
+  let layoutOwnerUserId = user.id;
 
   if (targetUserId && targetUserId !== user.id) {
     // Validar autorización de acceso
@@ -125,6 +128,7 @@ export async function getFamilyGraph(
     }
 
     isViewerGuest = true;
+    layoutOwnerUserId = targetUserId;
     viewerTier = (shareData?.tier as TreePermissionTier) || (isUserZero ? "advanced" : "basic");
     defaultFriendPersonId = shareData?.granter_person_id || null;
 
@@ -246,6 +250,7 @@ export async function getFamilyGraph(
 
       if (matchingShare) {
         isViewerGuest = true;
+        layoutOwnerUserId = matchingShare.targetUserId;
         viewerTier = matchingShare.tier;
         treeOwnerName = matchingShare.ownerName;
         grantedNodeIds = grantFor(matchingShare.targetPersonId, viewerTier);
@@ -576,10 +581,19 @@ export async function getFamilyGraph(
       type: e.type as "parent-child" | "union",
     }));
 
+  // Acomodo manual guardado (si la migración 20261008000000 aún no está aplicada, no hay reglas)
+  const { data: layoutPreference } = await supabase
+    .from("layout_preferences")
+    .select("rules")
+    .eq("user_id", layoutOwnerUserId)
+    .maybeSingle();
+  const layoutRules = parseLayoutRules(layoutPreference?.rules);
+
   const positions = computeTreeLayout({
     nodes: layoutInputNodes,
     edges: layoutInputEdges,
     focusId: centerPersonId,
+    rules: layoutRules,
   });
 
   const positionedNodes: TreeNodeData[] = rawNodes.map((node) => {
@@ -630,6 +644,8 @@ export async function getFamilyGraph(
     viewerTier,
     isViewerGuest,
     scope: isViewerGuest ? undefined : scope,
+    layoutRules,
+    layoutOwnerUserId,
     treeOwnerName,
     accessibleTrees,
   };
