@@ -4,6 +4,7 @@ import { getConnectedFamilyIds, inferKinship } from "../kinship-inference";
 import { assignGenerations, selectVisibleNodeIds, type VisibilityTier } from "../visible-nodes";
 import { computeTreeLayout, TREE_LAYOUT } from "../tree-layout";
 import { parseTreeScope, tierForScope } from "../tree-scope";
+import { countCrossings, countRowCrossings, reduceCrossings } from "../layout-crossings";
 import { ALL_IDS, allUnions, corruptUnions, genderOf, parentEdges, personsMap, validUnions } from "./fixtures";
 
 const { validUnions: saneUnions, issues } = partitionUnionsByIntegrity(allUnions, parentEdges);
@@ -497,8 +498,62 @@ describe("acomodo: cada miembro de una pareja del lado de su propia familia", ()
     expect(juanaLeft).toBe(herParentsLeft);
   });
 
+  it("sin cruces: Prieta se voltea y su hijo Jose Luis queda en el extremo, fuera de sus medios hermanos", () => {
+    const parentsOf = (id: string) => edges.filter((e) => e.type === "parent-child" && e.targetId === id).map((e) => e.sourceId);
+    const orders = new Map<number, string[]>();
+    for (const id of Object.keys(gen)) orders.set(gen[id], [...(orders.get(gen[id]) ?? []), id]);
+    orders.forEach((ids, g) => orders.set(g, ids.sort((a, b) => x(a) - x(b))));
+    const crossings = countCrossings(orders, {
+      getParents: parentsOf,
+      getPartners: () => [],
+      genOf: (id) => gen[id],
+      sideOf: () => 0,
+    });
+    expect(crossings).toBe(0);
+  });
+
   it("los hermanos de Jose quedan del lado de Jose, no del de Juana", () => {
     const joseSide = Math.sign(x("jose") - x("juana"));
     for (const sib of ["maria", "martin", "pancho"]) expect([sib, Math.sign(x(sib) - x("juana"))]).toEqual([sib, joseSide]);
+  });
+});
+
+describe("reducción de cruces", () => {
+  const parents: Record<string, string[]> = { x: ["a", "b"], y: ["c"] };
+  const partners: Record<string, string[]> = { a: ["b"], b: ["a"] };
+  const ctx = {
+    getParents: (id: string) => parents[id] ?? [],
+    getPartners: (id: string) => partners[id] ?? [],
+    genOf: () => 0,
+    sideOf: () => 0 as const,
+  };
+
+  it("cuenta como cruce dos líneas con extremos invertidos", () => {
+    expect(countRowCrossings(["y", "x"], ["a", "b", "c"], ctx)).toBe(1);
+    expect(countRowCrossings(["x", "y"], ["a", "b", "c"], ctx)).toBe(0);
+  });
+
+  it("encuentra el orden sin cruces sin separar a la pareja", () => {
+    const result = reduceCrossings(new Map([[0, ["c", "a", "b"]], [1, ["x", "y"]]]), ctx);
+    expect(countCrossings(result, ctx)).toBe(0);
+    const top = result.get(0)!;
+    expect(Math.abs(top.indexOf("a") - top.indexOf("b"))).toBe(1);
+  });
+
+  it("nunca pone al padre antes que la madre ni cruza las ramas materna y paterna", () => {
+    // Los hijos invertidos invitan a voltear a madre y padre: no debe hacerlo
+    const p2: Record<string, string[]> = { hijoPapa: ["papa"], hijoMama: ["mama"] };
+    const ctx2 = {
+      getParents: (id: string) => p2[id] ?? [],
+      getPartners: (id: string) => (id === "mama" ? ["papa"] : id === "papa" ? ["mama"] : []),
+      genOf: () => 0,
+      motherId: "mama",
+      fatherId: "papa",
+      sideOf: (id: string) => (id === "tioMaterno" ? (-1 as const) : 0 as const),
+    };
+    const result = reduceCrossings(new Map([[-1, ["tioMaterno", "mama", "papa"]], [0, ["hijoPapa", "hijoMama"]]]), ctx2);
+    const row = result.get(-1)!;
+    expect(row.indexOf("mama")).toBeLessThan(row.indexOf("papa"));
+    expect(row.indexOf("tioMaterno")).toBeLessThan(row.indexOf("mama"));
   });
 });

@@ -36,6 +36,8 @@
  */
 
 // Tarjeta tipo retrato (PersonCard): angosta para que el árbol crezca menos a los lados
+import { reduceCrossings } from "./layout-crossings";
+
 export const TREE_LAYOUT = {
   NODE_WIDTH: 168,
   NODE_HEIGHT: 176,
@@ -66,6 +68,9 @@ type Side = -1 | 0 | 1;
 
 const STEP = TREE_LAYOUT.NODE_WIDTH + TREE_LAYOUT.GAP_X;
 const LAYOUT_ITERATIONS = 20;
+// Búsqueda de menos cruces: completa hasta 150 personas, solo movimientos simples hasta 400
+const PAIR_SEARCH_MAX_NODES = 150;
+const SEARCH_MAX_NODES = 400;
 
 export function computeTreeLayout({
   nodes,
@@ -449,6 +454,17 @@ export function computeTreeLayout({
       order[i + 1] = a;
       i++;
     }
+  }
+
+  // --- Menos cruces: prueba voltear parejas y mover grupos de hermanos -----------
+  // (utils/layout-crossings.ts). Acotado en árboles grandes para que siga siendo rápido.
+  if (nodes.length <= SEARCH_MAX_NODES) {
+    const improved = reduceCrossings(
+      orders,
+      { getParents, getPartners, genOf, motherId, fatherId, sideOf },
+      { allowPairs: nodes.length <= PAIR_SEARCH_MAX_NODES }
+    );
+    improved.forEach((order, g) => orders.set(g, order));
   }
 
   // ---------------------------------------------------------------------------

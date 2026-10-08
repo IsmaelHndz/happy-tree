@@ -90,6 +90,7 @@ src/
 │   │   │   ├── kinship-inference.ts # Deduce exact kinship labels + getConnectedFamilyIds
 │   │   │   ├── graph-integrity.ts   # Pure O(V+E) union integrity validator & partitioner
 │   │   │   ├── tree-layout.ts       # Pure coordinate layout engine & collision resolver
+│   │   │   ├── layout-crossings.ts  # Counts parent→child crossings between rows; local search (flip couples, swap sibling blocks) to reduce them
 │   │   │   ├── tree-scene.ts        # What the canvas draws (cards, buses, unions, colors, highlight); shared by canvas and PDF
 │   │   │   ├── tree-svg.ts          # Scene → standalone SVG for the PDF (WinAnsi-safe text; icons drawn as paths)
 │   │   │   ├── viewport.ts          # Pan/zoom math: zoom at a point, pinch, fit to bounds
@@ -385,6 +386,9 @@ Two tabs, nothing else:
 1. Update `TreePermissionTier` union in `src/features/genealogy/types.ts`.
 2. Update the tier filter in `get-family-graph.ts` (section 8).
 3. Update the tier selector in `friends-manager-modal.tsx` and badge in `tree-selector.tsx`.
+
+### Crossing reduction in the layout
+After rows are ordered (and couples placed on their own family's side), `computeTreeLayout` runs `reduceCrossings` (`layout-crossings.ts`): it counts parent→child crossings between adjacent rows from the row orders alone and tries single moves (flip a couple, swap two adjacent sibling blocks), then pairs of moves when stuck, keeping the first that lowers the count. It never separates adjacent partners, never puts the father before the mother, and keeps maternal relatives left of the mother and paternal right of the father. Bounded to 400 people (pairs only up to 150) and 120ms. Remaining unavoidable crossings are drawn as bridges (`SceneBus.gaps`).
 
 ### Tree canvas on touch devices
 `tree-canvas.tsx` handles mouse, touch and pen with pointer events on the stage (`touch-action: none`): one pointer pans after a 6px threshold (the browser's click is then suppressed so a drag never opens or highlights a card), two pointers pinch-zoom around their midpoint, and the wheel zooms at the cursor through a native non-passive listener. Below 640px the tree opens fitted to the screen; below 768px secondary controls move to the "⋯" menu. Keep all drawing in `buildTreeScene` so the PDF export stays identical to the screen.
